@@ -574,8 +574,11 @@ void AnimationMixer::_clear_caches() {
 	_init_root_motion_cache();
 	_clear_audio_streams();
 	_clear_playing_caches();
-	for (KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		memdelete(K.value);
+	for (KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			memdelete(K2.value);
+		}
+		memdelete(K1.value);
 	}
 	track_cache.clear();
 	animation_track_num_to_track_cache.clear();
@@ -626,7 +629,8 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 
 	track_num_to_track_cache.resize(tracks.size());
 	for (uint32_t i = 0; i < tracks.size(); i++) {
-		TrackCache **track_ptr = track_cache.getptr(tracks[i]->thash);
+		AHashBucket *bucket_ptr = track_cache[tracks[i]->thash];
+		TrackCache **track_ptr = bucket_ptr->getptr(tracks[i]->tsubhash);
 		if (track_ptr == nullptr) {
 			track_num_to_track_cache[i] = nullptr;
 		} else {
@@ -681,19 +685,28 @@ bool AnimationMixer::_update_caches() {
 			}
 			NodePath path = anim->track_get_path(i);
 			Animation::TypeHash thash = anim->track_get_type_hash(i);
+			Animation::TypeHash tsubhash = anim->track_get_type_subhash(i);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
-				track = track_cache.get(thash);
+				AHashBucket *bucket_ptr = track_cache.get(thash);
+				track = bucket_ptr->get(tsubhash);
+			} else {
+				track_cache[thash] = new AHashBucket();
 			}
 
 			// If not valid, delete track.
 			if (track && (track->type != track_cache_type || ObjectDB::get_instance(track->object_id) == nullptr)) {
 				playing_caches.erase(track);
 				memdelete(track);
-				track_cache.erase(thash);
+				AHashBucket *bucket_ptr = track_cache.get(thash);
+				bucket_ptr->erase(tsubhash);
+				if (bucket_ptr->is_empty()) {
+					memdelete(&bucket_ptr);
+					track_cache.erase(thash);
+				}
 				track = nullptr;
 			}
 
@@ -904,7 +917,8 @@ bool AnimationMixer::_update_caches() {
 					}
 				}
 				track->path = path;
-				track_cache[thash] = track;
+				AHashBucket *bucket_ptr = track_cache.get(thash);
+				bucket_ptr->insert(tsubhash, track);
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -944,31 +958,46 @@ bool AnimationMixer::_update_caches() {
 		}
 	}
 
-	List<Animation::TypeHash> to_delete;
+	List<Pair<Animation::TypeHash, Animation::TypeHash>> to_delete;
 
-	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		if (K.value->setup_pass != setup_pass) {
-			to_delete.push_back(K.key);
+	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			if (K2.value->setup_pass != setup_pass) {
+				to_delete.push_back(Pair(K1.key, K2.key));
+			}
 		}
 	}
 
 	while (to_delete.front()) {
-		Animation::TypeHash thash = to_delete.front()->get();
-		memdelete(track_cache[thash]);
-		track_cache.erase(thash);
+		Animation::TypeHash thash = to_delete.front()->get().first;
+		Animation::TypeHash tsubhash = to_delete.front()->get().second;
+
+		AHashBucket *bucket = track_cache[thash];
+		memdelete(&bucket[tsubhash]);
+		bucket->erase(tsubhash);
+
+		if (bucket->is_empty()) {
+			memdelete(&bucket);
+			track_cache.erase(thash);
+		}
+
 		to_delete.pop_front();
 	}
 
 	track_map.clear();
 
 	int idx = 0;
-	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		track_map[K.value->path] = idx;
-		idx++;
+	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			track_map[K2.value->path] = idx;
+			idx++;
+		}
 	}
 
-	for (KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		K.value->blend_idx = track_map[K.value->path];
+	for (KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			K2.value->blend_idx = track_map[K2.value->path];
+		}
 	}
 
 	animation_track_num_to_track_cache.clear();
@@ -1049,43 +1078,46 @@ void AnimationMixer::_blend_init() {
 	}
 
 	// Init all value/transform/blend/bezier tracks that track_cache has.
-	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		TrackCache *track = K.value;
+	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			K2.value->blend_idx = track_map[K2.value->path];
+			TrackCache *track = K2.value;
 
-		track->total_weight = 0.0;
+			track->total_weight = 0.0;
 
-		switch (track->type) {
-			case Animation::TYPE_POSITION_3D: {
-				TrackCacheTransform *t = static_cast<TrackCacheTransform *>(track);
-				if (track->root_motion) {
-					root_motion_cache.loc = Vector3(0, 0, 0);
-					root_motion_cache.rot = Quaternion(0, 0, 0, 1);
-					root_motion_cache.scale = Vector3(1, 1, 1);
-				}
-				t->loc = t->init_loc;
-				t->rot = t->init_rot;
-				t->scale = t->init_scale;
-			} break;
-			case Animation::TYPE_BLEND_SHAPE: {
-				TrackCacheBlendShape *t = static_cast<TrackCacheBlendShape *>(track);
-				t->value = t->init_value;
-			} break;
-			case Animation::TYPE_VALUE: {
-				TrackCacheValue *t = static_cast<TrackCacheValue *>(track);
-				t->value = Animation::cast_to_blendwise(t->init_value);
-				t->element_size = t->init_value.is_string() ? (real_t)(t->init_value.operator String()).length() : 0;
-				t->use_continuous = false;
-				t->use_discrete = false;
-			} break;
-			case Animation::TYPE_AUDIO: {
-				TrackCacheAudio *t = static_cast<TrackCacheAudio *>(track);
-				for (KeyValue<ObjectID, PlayingAudioTrackInfo> &L : t->playing_streams) {
-					PlayingAudioTrackInfo &track_info = L.value;
-					track_info.volume = 0.0;
-				}
-			} break;
-			default: {
-			} break;
+			switch (track->type) {
+			    case Animation::TYPE_POSITION_3D: {
+				    TrackCacheTransform *t = static_cast<TrackCacheTransform *>(track);
+					if (track->root_motion) {
+						root_motion_cache.loc = Vector3(0, 0, 0);
+						root_motion_cache.rot = Quaternion(0, 0, 0, 1);
+						root_motion_cache.scale = Vector3(1, 1, 1);
+					}
+					t->loc = t->init_loc;
+					t->rot = t->init_rot;
+					t->scale = t->init_scale;
+			    } break;
+			    case Animation::TYPE_BLEND_SHAPE: {
+				    TrackCacheBlendShape *t = static_cast<TrackCacheBlendShape *>(track);
+					t->value = t->init_value;
+			    } break;
+			    case Animation::TYPE_VALUE: {
+				    TrackCacheValue *t = static_cast<TrackCacheValue *>(track);
+					t->value = Animation::cast_to_blendwise(t->init_value);
+					t->element_size = t->init_value.is_string() ? (real_t)(t->init_value.operator String()).length() : 0;
+					t->use_continuous = false;
+					t->use_discrete = false;
+			    } break;
+			    case Animation::TYPE_AUDIO: {
+				    TrackCacheAudio *t = static_cast<TrackCacheAudio *>(track);
+					for (KeyValue<ObjectID, PlayingAudioTrackInfo> &L : t->playing_streams) {
+						PlayingAudioTrackInfo &track_info = L.value;
+						track_info.volume = 0.0;
+					}
+			    } break;
+			    default: {
+			    } break;
+			}
 		}
 	}
 }
@@ -1846,166 +1878,168 @@ void AnimationMixer::_blend_process(double p_delta, bool p_update_only) {
 
 void AnimationMixer::_blend_apply() {
 	// Finally, set the tracks.
-	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		TrackCache *track = K.value;
-		bool is_zero_amount = Math::is_zero_approx(track->total_weight);
-		if (!deterministic && is_zero_amount) {
-			continue;
-		}
-		switch (track->type) {
-			case Animation::TYPE_POSITION_3D: {
-#ifndef _3D_DISABLED
-				TrackCacheTransform *t = static_cast<TrackCacheTransform *>(track);
+	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			TrackCache *track = K2.value;
+			bool is_zero_amount = Math::is_zero_approx(track->total_weight);
+			if (!deterministic && is_zero_amount) {
+				continue;
+			}
+			switch (track->type) {
+			    case Animation::TYPE_POSITION_3D: {
+    #ifndef _3D_DISABLED
+				    TrackCacheTransform *t = static_cast<TrackCacheTransform *>(track);
 
-				if (t->root_motion) {
-					root_motion_position = root_motion_cache.loc;
-					root_motion_rotation = root_motion_cache.rot;
-					root_motion_scale = root_motion_cache.scale - Vector3(1, 1, 1);
-					root_motion_position_accumulator = t->loc;
-					root_motion_rotation_accumulator = t->rot;
-					root_motion_scale_accumulator = t->scale;
-				} else if (t->skeleton_id.is_valid() && t->bone_idx >= 0) {
-					Skeleton3D *t_skeleton = ObjectDB::get_instance<Skeleton3D>(t->skeleton_id);
-					if (!t_skeleton) {
-						return;
-					}
-					if (t->loc_used) {
-						t_skeleton->set_bone_pose_position(t->bone_idx, t->loc);
-					}
-					if (t->rot_used) {
-						t_skeleton->set_bone_pose_rotation(t->bone_idx, t->rot);
-					}
-					if (t->scale_used) {
-						t_skeleton->set_bone_pose_scale(t->bone_idx, t->scale);
-					}
+					if (t->root_motion) {
+						root_motion_position = root_motion_cache.loc;
+						root_motion_rotation = root_motion_cache.rot;
+						root_motion_scale = root_motion_cache.scale - Vector3(1, 1, 1);
+						root_motion_position_accumulator = t->loc;
+						root_motion_rotation_accumulator = t->rot;
+						root_motion_scale_accumulator = t->scale;
+					} else if (t->skeleton_id.is_valid() && t->bone_idx >= 0) {
+						Skeleton3D *t_skeleton = ObjectDB::get_instance<Skeleton3D>(t->skeleton_id);
+						if (!t_skeleton) {
+							return;
+						}
+						if (t->loc_used) {
+							t_skeleton->set_bone_pose_position(t->bone_idx, t->loc);
+						}
+						if (t->rot_used) {
+							t_skeleton->set_bone_pose_rotation(t->bone_idx, t->rot);
+						}
+						if (t->scale_used) {
+							t_skeleton->set_bone_pose_scale(t->bone_idx, t->scale);
+						}
 
-				} else if (!t->skeleton_id.is_valid()) {
-					Node3D *t_node_3d = ObjectDB::get_instance<Node3D>(t->object_id);
-					if (!t_node_3d) {
-						return;
-					}
-					if (t->loc_used) {
-						t_node_3d->set_position(t->loc);
-					}
-					if (t->rot_used) {
-						t_node_3d->set_rotation(t->rot.get_euler());
-					}
-					if (t->scale_used) {
-						t_node_3d->set_scale(t->scale);
-					}
-				}
-#endif // _3D_DISABLED
-			} break;
-			case Animation::TYPE_BLEND_SHAPE: {
-#ifndef _3D_DISABLED
-				TrackCacheBlendShape *t = static_cast<TrackCacheBlendShape *>(track);
-
-				MeshInstance3D *t_mesh_3d = ObjectDB::get_instance<MeshInstance3D>(t->object_id);
-				if (t_mesh_3d) {
-					t_mesh_3d->set_blend_shape_value(t->shape_index, t->value);
-				}
-#endif // _3D_DISABLED
-			} break;
-			case Animation::TYPE_VALUE: {
-				TrackCacheValue *t = static_cast<TrackCacheValue *>(track);
-
-				if (callback_mode_discrete == ANIMATION_CALLBACK_MODE_DISCRETE_FORCE_CONTINUOUS) {
-					t->is_init = false; // Always update in Force Continuous.
-				} else if (!t->use_continuous && (t->use_discrete || !deterministic)) {
-					t->is_init = true; // If there is no continuous value and only disctere value is applied or just started, don't RESET.
-				}
-
-				if ((t->is_init && (is_zero_amount || !t->use_continuous)) ||
-						(callback_mode_discrete != ANIMATION_CALLBACK_MODE_DISCRETE_FORCE_CONTINUOUS &&
-								!is_zero_amount &&
-								callback_mode_discrete == ANIMATION_CALLBACK_MODE_DISCRETE_DOMINANT &&
-								t->use_discrete)) {
-					break; // Don't overwrite the value set by UPDATE_DISCRETE.
-				}
-
-				if (callback_mode_discrete != ANIMATION_CALLBACK_MODE_DISCRETE_FORCE_CONTINUOUS) {
-					t->is_init = !t->use_continuous; // If there is no Continuous in non-Force Continuous type, it means RESET.
-				}
-
-				// Trim unused elements if init array/string is not blended.
-				if (t->value.is_array()) {
-					int actual_blended_size = (int)Math::round(Math::abs(t->element_size.operator real_t()));
-					if (actual_blended_size < (t->value.operator Array()).size()) {
-						real_t abs_weight = Math::abs(track->total_weight);
-						if (abs_weight >= 1.0) {
-							(t->value.operator Array()).resize(actual_blended_size);
-						} else if (t->init_value.is_string()) {
-							(t->value.operator Array()).resize(Animation::interpolate_variant((t->init_value.operator String()).length(), actual_blended_size, abs_weight));
+					} else if (!t->skeleton_id.is_valid()) {
+						Node3D *t_node_3d = ObjectDB::get_instance<Node3D>(t->object_id);
+						if (!t_node_3d) {
+							return;
+						}
+						if (t->loc_used) {
+							t_node_3d->set_position(t->loc);
+						}
+						if (t->rot_used) {
+							t_node_3d->set_rotation(t->rot.get_euler());
+						}
+						if (t->scale_used) {
+							t_node_3d->set_scale(t->scale);
 						}
 					}
-				}
+    #endif // _3D_DISABLED
+			    } break;
+			    case Animation::TYPE_BLEND_SHAPE: {
+    #ifndef _3D_DISABLED
+				    TrackCacheBlendShape *t = static_cast<TrackCacheBlendShape *>(track);
 
-				Object *t_obj = ObjectDB::get_instance(t->object_id);
-				if (t_obj) {
-					t_obj->set_indexed(t->subpath, Animation::cast_from_blendwise(t->value, t->init_value.get_type()));
-				}
+					MeshInstance3D *t_mesh_3d = ObjectDB::get_instance<MeshInstance3D>(t->object_id);
+					if (t_mesh_3d) {
+						t_mesh_3d->set_blend_shape_value(t->shape_index, t->value);
+					}
+    #endif // _3D_DISABLED
+			    } break;
+			    case Animation::TYPE_VALUE: {
+				    TrackCacheValue *t = static_cast<TrackCacheValue *>(track);
 
-			} break;
-			case Animation::TYPE_AUDIO: {
-				TrackCacheAudio *t = static_cast<TrackCacheAudio *>(track);
+					if (callback_mode_discrete == ANIMATION_CALLBACK_MODE_DISCRETE_FORCE_CONTINUOUS) {
+						t->is_init = false; // Always update in Force Continuous.
+					} else if (!t->use_continuous && (t->use_discrete || !deterministic)) {
+						t->is_init = true; // If there is no continuous value and only disctere value is applied or just started, don't RESET.
+					}
 
-				// Audio ending process.
-				LocalVector<ObjectID> erase_maps;
-				for (KeyValue<ObjectID, PlayingAudioTrackInfo> &L : t->playing_streams) {
-					PlayingAudioTrackInfo &track_info = L.value;
-					float db = Math::linear_to_db(track_info.use_blend ? track_info.volume : 1.0);
-					LocalVector<int> erase_streams;
-					AHashMap<int, PlayingAudioStreamInfo> &map = track_info.stream_info;
-					for (const KeyValue<int, PlayingAudioStreamInfo> &M : map) {
-						PlayingAudioStreamInfo pasi = M.value;
+					if ((t->is_init && (is_zero_amount || !t->use_continuous)) ||
+					        (callback_mode_discrete != ANIMATION_CALLBACK_MODE_DISCRETE_FORCE_CONTINUOUS &&
+					                !is_zero_amount &&
+					                callback_mode_discrete == ANIMATION_CALLBACK_MODE_DISCRETE_DOMINANT &&
+					                t->use_discrete)) {
+						break; // Don't overwrite the value set by UPDATE_DISCRETE.
+					}
 
-						bool stop = false;
-						if (!t->audio_stream_playback->is_stream_playing(pasi.index)) {
-							stop = true;
-						}
-						if (!track_info.loop) {
-							if (!track_info.backward) {
-								if (Animation::is_less_approx(track_info.time, pasi.start)) {
-									stop = true;
-								}
-							} else if (track_info.backward) {
-								if (Animation::is_greater_approx(track_info.time, pasi.start)) {
-									stop = true;
-								}
+					if (callback_mode_discrete != ANIMATION_CALLBACK_MODE_DISCRETE_FORCE_CONTINUOUS) {
+						t->is_init = !t->use_continuous; // If there is no Continuous in non-Force Continuous type, it means RESET.
+					}
+
+					// Trim unused elements if init array/string is not blended.
+					if (t->value.is_array()) {
+						int actual_blended_size = (int)Math::round(Math::abs(t->element_size.operator real_t()));
+						if (actual_blended_size < (t->value.operator Array()).size()) {
+							real_t abs_weight = Math::abs(track->total_weight);
+							if (abs_weight >= 1.0) {
+								(t->value.operator Array()).resize(actual_blended_size);
+							} else if (t->init_value.is_string()) {
+								(t->value.operator Array()).resize(Animation::interpolate_variant((t->init_value.operator String()).length(), actual_blended_size, abs_weight));
 							}
 						}
-						if (Animation::is_greater_approx(pasi.len, 0)) {
-							double len = 0.0;
-							if (!track_info.backward) {
-								len = Animation::is_greater_approx(pasi.start, track_info.time) ? (track_info.length - pasi.start) + track_info.time : track_info.time - pasi.start;
-							} else {
-								len = Animation::is_less_approx(pasi.start, track_info.time) ? (track_info.length - track_info.time) + pasi.start : pasi.start - track_info.time;
-							}
-							if (Animation::is_greater_approx(len, pasi.len)) {
+					}
+
+					Object *t_obj = ObjectDB::get_instance(t->object_id);
+					if (t_obj) {
+						t_obj->set_indexed(t->subpath, Animation::cast_from_blendwise(t->value, t->init_value.get_type()));
+					}
+
+			    } break;
+			    case Animation::TYPE_AUDIO: {
+				    TrackCacheAudio *t = static_cast<TrackCacheAudio *>(track);
+
+					// Audio ending process.
+					LocalVector<ObjectID> erase_maps;
+					for (KeyValue<ObjectID, PlayingAudioTrackInfo> &L : t->playing_streams) {
+						PlayingAudioTrackInfo &track_info = L.value;
+						float db = Math::linear_to_db(track_info.use_blend ? track_info.volume : 1.0);
+						LocalVector<int> erase_streams;
+						AHashMap<int, PlayingAudioStreamInfo> &map = track_info.stream_info;
+						for (const KeyValue<int, PlayingAudioStreamInfo> &M : map) {
+							PlayingAudioStreamInfo pasi = M.value;
+
+							bool stop = false;
+							if (!t->audio_stream_playback->is_stream_playing(pasi.index)) {
 								stop = true;
 							}
+							if (!track_info.loop) {
+								if (!track_info.backward) {
+									if (Animation::is_less_approx(track_info.time, pasi.start)) {
+										stop = true;
+									}
+								} else if (track_info.backward) {
+									if (Animation::is_greater_approx(track_info.time, pasi.start)) {
+										stop = true;
+									}
+								}
+							}
+							if (Animation::is_greater_approx(pasi.len, 0)) {
+								double len = 0.0;
+								if (!track_info.backward) {
+									len = Animation::is_greater_approx(pasi.start, track_info.time) ? (track_info.length - pasi.start) + track_info.time : track_info.time - pasi.start;
+								} else {
+									len = Animation::is_less_approx(pasi.start, track_info.time) ? (track_info.length - track_info.time) + pasi.start : pasi.start - track_info.time;
+								}
+								if (Animation::is_greater_approx(len, pasi.len)) {
+									stop = true;
+								}
+							}
+							if (stop) {
+								// Time to stop.
+								t->audio_stream_playback->stop_stream(pasi.index);
+								erase_streams.push_back(M.key);
+							} else {
+								t->audio_stream_playback->set_stream_volume(pasi.index, db);
+							}
 						}
-						if (stop) {
-							// Time to stop.
-							t->audio_stream_playback->stop_stream(pasi.index);
-							erase_streams.push_back(M.key);
-						} else {
-							t->audio_stream_playback->set_stream_volume(pasi.index, db);
+						for (uint32_t erase_idx = 0; erase_idx < erase_streams.size(); erase_idx++) {
+							map.erase(erase_streams[erase_idx]);
+						}
+						if (map.is_empty()) {
+							erase_maps.push_back(L.key);
 						}
 					}
-					for (uint32_t erase_idx = 0; erase_idx < erase_streams.size(); erase_idx++) {
-						map.erase(erase_streams[erase_idx]);
+					for (uint32_t erase_idx = 0; erase_idx < erase_maps.size(); erase_idx++) {
+						t->playing_streams.erase(erase_maps[erase_idx]);
 					}
-					if (map.is_empty()) {
-						erase_maps.push_back(L.key);
-					}
-				}
-				for (uint32_t erase_idx = 0; erase_idx < erase_maps.size(); erase_idx++) {
-					t->playing_streams.erase(erase_maps[erase_idx]);
-				}
-			} break;
-			default: {
-			} // The rest don't matter.
+			    } break;
+			    default: {
+			    } // The rest don't matter.
+			}
 		}
 	}
 }
@@ -2119,81 +2153,83 @@ bool AnimationMixer::can_apply_reset() const {
 }
 
 void AnimationMixer::_build_backup_track_cache() {
-	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
-		TrackCache *track = K.value;
-		track->total_weight = 1.0;
-		switch (track->type) {
-			case Animation::TYPE_POSITION_3D: {
-#ifndef _3D_DISABLED
-				TrackCacheTransform *t = static_cast<TrackCacheTransform *>(track);
-				if (t->root_motion) {
-					// Do nothing.
-				} else if (t->skeleton_id.is_valid() && t->bone_idx >= 0) {
-					Skeleton3D *t_skeleton = ObjectDB::get_instance<Skeleton3D>(t->skeleton_id);
-					if (!t_skeleton) {
-						return;
+	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
+		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+			TrackCache *track = K2.value;
+			track->total_weight = 1.0;
+			switch (track->type) {
+			    case Animation::TYPE_POSITION_3D: {
+    #ifndef _3D_DISABLED
+				    TrackCacheTransform *t = static_cast<TrackCacheTransform *>(track);
+					if (t->root_motion) {
+						// Do nothing.
+					} else if (t->skeleton_id.is_valid() && t->bone_idx >= 0) {
+						Skeleton3D *t_skeleton = ObjectDB::get_instance<Skeleton3D>(t->skeleton_id);
+						if (!t_skeleton) {
+							return;
+						}
+						if (t->loc_used) {
+							t->loc = t_skeleton->get_bone_pose_position(t->bone_idx);
+						}
+						if (t->rot_used) {
+							t->rot = t_skeleton->get_bone_pose_rotation(t->bone_idx);
+						}
+						if (t->scale_used) {
+							t->scale = t_skeleton->get_bone_pose_scale(t->bone_idx);
+						}
+					} else if (!t->skeleton_id.is_valid()) {
+						Node3D *t_node_3d = ObjectDB::get_instance<Node3D>(t->object_id);
+						if (!t_node_3d) {
+							return;
+						}
+						if (t->loc_used) {
+							t->loc = t_node_3d->get_position();
+						}
+						if (t->rot_used) {
+							t->rot = t_node_3d->get_quaternion();
+						}
+						if (t->scale_used) {
+							t->scale = t_node_3d->get_scale();
+						}
 					}
-					if (t->loc_used) {
-						t->loc = t_skeleton->get_bone_pose_position(t->bone_idx);
+    #endif // _3D_DISABLED
+			    } break;
+			    case Animation::TYPE_BLEND_SHAPE: {
+    #ifndef _3D_DISABLED
+				    TrackCacheBlendShape *t = static_cast<TrackCacheBlendShape *>(track);
+					MeshInstance3D *t_mesh_3d = ObjectDB::get_instance<MeshInstance3D>(t->object_id);
+					if (t_mesh_3d) {
+						t->value = t_mesh_3d->get_blend_shape_value(t->shape_index);
 					}
-					if (t->rot_used) {
-						t->rot = t_skeleton->get_bone_pose_rotation(t->bone_idx);
+    #endif // _3D_DISABLED
+			    } break;
+			    case Animation::TYPE_VALUE: {
+				    TrackCacheValue *t = static_cast<TrackCacheValue *>(track);
+					Object *t_obj = ObjectDB::get_instance(t->object_id);
+					if (t_obj) {
+						t->value = Animation::cast_to_blendwise(t_obj->get_indexed(t->subpath));
 					}
-					if (t->scale_used) {
-						t->scale = t_skeleton->get_bone_pose_scale(t->bone_idx);
+					t->use_continuous = true;
+					t->use_discrete = false;
+					if (t->init_value.is_array()) {
+						t->element_size = MAX(t->element_size.operator int(), (t->value.operator Array()).size());
+					} else if (t->init_value.is_string()) {
+						t->element_size = (real_t)(t->value.operator Array()).size();
 					}
-				} else if (!t->skeleton_id.is_valid()) {
-					Node3D *t_node_3d = ObjectDB::get_instance<Node3D>(t->object_id);
-					if (!t_node_3d) {
-						return;
+			    } break;
+			    case Animation::TYPE_AUDIO: {
+				    TrackCacheAudio *t = static_cast<TrackCacheAudio *>(track);
+					Object *t_obj = ObjectDB::get_instance(t->object_id);
+					if (t_obj) {
+						Node *asp = Object::cast_to<Node>(t_obj);
+						if (asp) {
+							asp->call(SNAME("set_stream"), Ref<AudioStream>());
+						}
 					}
-					if (t->loc_used) {
-						t->loc = t_node_3d->get_position();
-					}
-					if (t->rot_used) {
-						t->rot = t_node_3d->get_quaternion();
-					}
-					if (t->scale_used) {
-						t->scale = t_node_3d->get_scale();
-					}
-				}
-#endif // _3D_DISABLED
-			} break;
-			case Animation::TYPE_BLEND_SHAPE: {
-#ifndef _3D_DISABLED
-				TrackCacheBlendShape *t = static_cast<TrackCacheBlendShape *>(track);
-				MeshInstance3D *t_mesh_3d = ObjectDB::get_instance<MeshInstance3D>(t->object_id);
-				if (t_mesh_3d) {
-					t->value = t_mesh_3d->get_blend_shape_value(t->shape_index);
-				}
-#endif // _3D_DISABLED
-			} break;
-			case Animation::TYPE_VALUE: {
-				TrackCacheValue *t = static_cast<TrackCacheValue *>(track);
-				Object *t_obj = ObjectDB::get_instance(t->object_id);
-				if (t_obj) {
-					t->value = Animation::cast_to_blendwise(t_obj->get_indexed(t->subpath));
-				}
-				t->use_continuous = true;
-				t->use_discrete = false;
-				if (t->init_value.is_array()) {
-					t->element_size = MAX(t->element_size.operator int(), (t->value.operator Array()).size());
-				} else if (t->init_value.is_string()) {
-					t->element_size = (real_t)(t->value.operator Array()).size();
-				}
-			} break;
-			case Animation::TYPE_AUDIO: {
-				TrackCacheAudio *t = static_cast<TrackCacheAudio *>(track);
-				Object *t_obj = ObjectDB::get_instance(t->object_id);
-				if (t_obj) {
-					Node *asp = Object::cast_to<Node>(t_obj);
-					if (asp) {
-						asp->call(SNAME("set_stream"), Ref<AudioStream>());
-					}
-				}
-			} break;
-			default: {
-			} // The rest don't matter.
+			    } break;
+			    default: {
+			    } // The rest don't matter.
+			}
 		}
 	}
 }
@@ -2216,7 +2252,7 @@ Ref<AnimatedValuesBackup> AnimationMixer::make_backup() {
 	make_animation_instance(SceneStringName(RESET), pi);
 	_build_backup_track_cache();
 
-	backup->set_data(AHashMap<Animation::TypeHash, TrackCache *, HashHasher>(track_cache));
+	backup->set_data(AHashBucketMap(track_cache));
 	clear_animation_instances();
 
 	return backup;
@@ -2248,7 +2284,7 @@ void AnimationMixer::restore(const Ref<AnimatedValuesBackup> &p_backup) {
 	ERR_FAIL_COND(p_backup.is_null());
 	track_cache = p_backup->get_data();
 	_blend_apply();
-	track_cache = AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher>();
+	track_cache = AHashBucketMap();
 	cache_valid = false;
 }
 
@@ -2306,7 +2342,10 @@ void AnimationMixer::capture(const StringName &p_name, double p_duration, Tween:
 			continue;
 		}
 		if (reference_animation->track_get_type(i) == Animation::TYPE_VALUE && reference_animation->value_track_get_update_mode(i) == Animation::UPDATE_CAPTURE) {
-			TrackCacheValue *t = static_cast<TrackCacheValue *>(track_cache[reference_animation->track_get_type_hash(i)]);
+			Animation::TypeHash thash = reference_animation->track_get_type_hash(i);
+			Animation::TypeHash tsubhash = reference_animation->track_get_type_subhash(i);
+			AHashBucket *bucket = track_cache[thash];
+			TrackCacheValue *t = static_cast<TrackCacheValue *>(bucket->get(tsubhash));
 			Object *t_obj = ObjectDB::get_instance(t->object_id);
 			if (t_obj) {
 				Variant value = t_obj->get_indexed(t->subpath);
@@ -2492,33 +2531,50 @@ AnimationMixer::AnimationMixer() {
 AnimationMixer::~AnimationMixer() {
 }
 
-void AnimatedValuesBackup::set_data(const AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> p_data) {
+void AnimatedValuesBackup::set_data(const AnimationMixer::AHashBucketMap p_data) {
 	clear_data();
 
-	for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E : p_data) {
-		AnimationMixer::TrackCache *track = get_cache_copy(E.value);
-		if (!track) {
-			continue; // Some types of tracks do not get a copy and must be ignored.
+	for (const KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &E1 : p_data) {
+		AnimationMixer::AHashBucket *bucket = new AnimationMixer::AHashBucket();
+		data.insert(E1.key, bucket);
+		for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E2 : *E1.value) {
+			AnimationMixer::TrackCache *track = get_cache_copy(E2.value);
+			if (!track) {
+				continue; // Some types of tracks do not get a copy and must be ignored.
+			}
+			bucket->insert(E2.key, track);
 		}
-
-		data.insert(E.key, track);
+		if (bucket->is_empty()) {
+			memdelete(&bucket);
+			data.erase(E1.key);
+		}
 	}
 }
 
-AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> AnimatedValuesBackup::get_data() const {
-	AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> ret;
-	for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E : data) {
-		AnimationMixer::TrackCache *track = get_cache_copy(E.value);
-		ERR_CONTINUE(!track); // Backup shouldn't contain tracks that cannot be copied, this is a mistake.
-
-		ret.insert(E.key, track);
+AnimationMixer::AHashBucketMap AnimatedValuesBackup::get_data() const {
+	AnimationMixer::AHashBucketMap ret;
+	for (const KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &E1 : data) {
+		AnimationMixer::AHashBucket *bucket = new AnimationMixer::AHashBucket();
+		ret.insert(E1.key, bucket);
+		for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E2 : *E1.value) {
+			AnimationMixer::TrackCache *track = get_cache_copy(E2.value);
+			ERR_CONTINUE(!track); // Backup shouldn't contain tracks that cannot be copied, this is a mistake.
+			bucket->insert(E2.key, track);
+		}
+		if (bucket->is_empty()) {
+			memdelete(&bucket);
+			ret.erase(E1.key);
+		}
 	}
 	return ret;
 }
 
 void AnimatedValuesBackup::clear_data() {
-	for (KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K : data) {
-		memdelete(K.value);
+	for (KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &K1 : data) {
+		for (KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K2 : *K1.value) {
+			memdelete(K2.value);
+		}
+		memdelete(K1.value);
 	}
 	data.clear();
 }

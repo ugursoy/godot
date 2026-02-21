@@ -1065,11 +1065,17 @@ void Animation::_track_update_hash(int p_track) {
 	const NodePath &track_path = tracks[p_track]->path;
 	const TrackType track_cache_type = get_cache_type(tracks[p_track]->type);
 	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
+	tracks[p_track]->tsubhash = HashMapHasherDefault::hash(track_path);
 }
 
 Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
 	return tracks[p_track]->thash;
+}
+
+Animation::TypeHash Animation::track_get_type_subhash(int p_track) const {
+	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
+	return tracks[p_track]->tsubhash;
 }
 
 void Animation::track_set_interpolation_type(int p_track, InterpolationType p_interp) {

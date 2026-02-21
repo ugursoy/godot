@@ -200,6 +200,9 @@ protected:
 		}
 	};
 
+	typedef AHashMap<Animation::TypeHash, TrackCache*, HashHasher> AHashBucket;
+	typedef AHashMap<Animation::TypeHash, AHashBucket*, HashHasher> AHashBucketMap;
+
 	struct RootMotionCache {
 		Vector3 loc = Vector3(0, 0, 0);
 		Quaternion rot = Quaternion(0, 0, 0, 1);
@@ -304,7 +307,7 @@ protected:
 	};
 
 	RootMotionCache root_motion_cache;
-	AHashMap<Animation::TypeHash, TrackCache *, HashHasher> track_cache;
+	AHashBucketMap track_cache;
 	AHashMap<Ref<Animation>, LocalVector<TrackCache *>> animation_track_num_to_track_cache;
 	HashSet<TrackCache *> playing_caches;
 	Vector<Node *> playing_audio_stream_players;
@@ -485,11 +488,11 @@ public:
 class AnimatedValuesBackup : public RefCounted {
 	GDCLASS(AnimatedValuesBackup, RefCounted);
 
-	AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> data;
+	AnimationMixer::AHashBucketMap data;
 
 public:
-	void set_data(const AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> p_data);
-	AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> get_data() const;
+	void set_data(const AnimationMixer::AHashBucketMap p_data);
+	AnimationMixer::AHashBucketMap get_data() const;
 	void clear_data();
 
 	AnimationMixer::TrackCache *get_cache_copy(AnimationMixer::TrackCache *p_cache) const;
