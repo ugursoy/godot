@@ -694,7 +694,7 @@ bool AnimationMixer::_update_caches() {
 				AHashBucket *bucket_ptr = track_cache.get(thash);
 				track = bucket_ptr->get(tsubhash);
 			} else {
-				track_cache[thash] = new AHashBucket();
+				track_cache[thash] = memnew(AHashBucket);
 			}
 
 			// If not valid, delete track.
@@ -2535,7 +2535,7 @@ void AnimatedValuesBackup::set_data(const AnimationMixer::AHashBucketMap p_data)
 	clear_data();
 
 	for (const KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &E1 : p_data) {
-		AnimationMixer::AHashBucket *bucket = new AnimationMixer::AHashBucket();
+		AnimationMixer::AHashBucket *bucket = memnew(AnimationMixer::AHashBucket);
 		data.insert(E1.key, bucket);
 		for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E2 : *E1.value) {
 			AnimationMixer::TrackCache *track = get_cache_copy(E2.value);
@@ -2554,7 +2554,7 @@ void AnimatedValuesBackup::set_data(const AnimationMixer::AHashBucketMap p_data)
 AnimationMixer::AHashBucketMap AnimatedValuesBackup::get_data() const {
 	AnimationMixer::AHashBucketMap ret;
 	for (const KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &E1 : data) {
-		AnimationMixer::AHashBucket *bucket = new AnimationMixer::AHashBucket();
+		AnimationMixer::AHashBucket *bucket = memnew(AnimationMixer::AHashBucket);
 		ret.insert(E1.key, bucket);
 		for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E2 : *E1.value) {
 			AnimationMixer::TrackCache *track = get_cache_copy(E2.value);
