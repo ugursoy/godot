@@ -151,6 +151,8 @@ protected:
 		int blend_idx = -1;
 		ObjectID object_id;
 		real_t total_weight = 0.0;
+		TrackCache* next = nullptr;
+		TrackCache* prev = nullptr;
 
 		TrackCache() = default;
 		TrackCache(const TrackCache &p_other) :
