@@ -575,7 +575,7 @@ void AnimationMixer::_clear_caches() {
 	_clear_audio_streams();
 	_clear_playing_caches();
 	for (KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			memdelete(K2.value);
 		}
 		memdelete(K1.value);
@@ -630,7 +630,7 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 	track_num_to_track_cache.resize(tracks.size());
 	for (uint32_t i = 0; i < tracks.size(); i++) {
 		AHashBucket *bucket_ptr = track_cache[tracks[i]->thash];
-		TrackCache **track_ptr = bucket_ptr->getptr(tracks[i]->tsubhash);
+		TrackCache **track_ptr = bucket_ptr->getptr(tracks[i]->hbucket_index);
 		if (track_ptr == nullptr) {
 			track_num_to_track_cache[i] = nullptr;
 		} else {
@@ -685,16 +685,16 @@ bool AnimationMixer::_update_caches() {
 			}
 			NodePath path = anim->track_get_path(i);
 			Animation::TypeHash thash = anim->track_get_type_hash(i);
-			Animation::TypeHash tsubhash = anim->track_get_type_subhash(i);
+			Animation::TypeBucket hbucket_index = anim->track_get_hash_bucket_index(i);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
 				AHashBucket *bucket_ptr = track_cache.get(thash);
-				track = bucket_ptr->get(tsubhash);
-			} else {
-				track_cache[thash] = memnew(AHashBucket);
+				if (bucket_ptr && bucket_ptr->has(hbucket_index)) {
+					track = bucket_ptr->get(hbucket_index);
+				}
 			}
 
 			// If not valid, delete track.
@@ -702,9 +702,9 @@ bool AnimationMixer::_update_caches() {
 				playing_caches.erase(track);
 				memdelete(track);
 				AHashBucket *bucket_ptr = track_cache.get(thash);
-				bucket_ptr->erase(tsubhash);
+				bucket_ptr->erase(hbucket_index);
 				if (bucket_ptr->is_empty()) {
-					memdelete(&bucket_ptr);
+					memdelete(bucket_ptr);
 					track_cache.erase(thash);
 				}
 				track = nullptr;
@@ -917,8 +917,19 @@ bool AnimationMixer::_update_caches() {
 					}
 				}
 				track->path = path;
-				AHashBucket *bucket_ptr = track_cache.get(thash);
-				bucket_ptr->insert(tsubhash, track);
+
+				AHashBucket *bucket_ptr;
+				if (track_cache.has(thash)) {
+					bucket_ptr = track_cache[thash];
+				} else {
+					bucket_ptr = memnew(AHashBucket);
+					track_cache[thash] = bucket_ptr;
+				}
+				// In case there are hits in the bucket, re-randomize the index
+				while (bucket_ptr->has(hbucket_index)) {
+					hbucket_index = anim->track_randomize_hash_bucket_index(i);
+				}
+				bucket_ptr->insert(hbucket_index, track);
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -958,10 +969,10 @@ bool AnimationMixer::_update_caches() {
 		}
 	}
 
-	List<Pair<Animation::TypeHash, Animation::TypeHash>> to_delete;
+	List<Pair<Animation::TypeHash, Animation::TypeBucket>> to_delete;
 
 	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			if (K2.value->setup_pass != setup_pass) {
 				to_delete.push_back(Pair(K1.key, K2.key));
 			}
@@ -970,11 +981,11 @@ bool AnimationMixer::_update_caches() {
 
 	while (to_delete.front()) {
 		Animation::TypeHash thash = to_delete.front()->get().first;
-		Animation::TypeHash tsubhash = to_delete.front()->get().second;
+		Animation::TypeBucket bucket_index = to_delete.front()->get().second;
 
 		AHashBucket *bucket = track_cache[thash];
-		memdelete(&bucket[tsubhash]);
-		bucket->erase(tsubhash);
+		memdelete(&bucket[bucket_index]);
+		bucket->erase(bucket_index);
 
 		if (bucket->is_empty()) {
 			memdelete(&bucket);
@@ -988,14 +999,14 @@ bool AnimationMixer::_update_caches() {
 
 	int idx = 0;
 	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			track_map[K2.value->path] = idx;
 			idx++;
 		}
 	}
 
 	for (KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			K2.value->blend_idx = track_map[K2.value->path];
 		}
 	}
@@ -1079,7 +1090,7 @@ void AnimationMixer::_blend_init() {
 
 	// Init all value/transform/blend/bezier tracks that track_cache has.
 	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			K2.value->blend_idx = track_map[K2.value->path];
 			TrackCache *track = K2.value;
 
@@ -1179,7 +1190,9 @@ void AnimationMixer::_blend_calc_total_weight() {
 		ERR_CONTINUE_EDMSG(!animation_track_num_to_track_cache.has(a), "No animation in cache.");
 		LocalVector<TrackCache *> &track_num_to_track_cache = animation_track_num_to_track_cache[a];
 		thread_local HashSet<Animation::TypeHash, HashHasher> processed_hashes;
+		thread_local HashSet<Animation::TypeBucket, HashHasher> processed_buckets;
 		processed_hashes.clear();
+		processed_buckets.clear();
 		const LocalVector<Animation::Track *> &tracks = a->get_tracks();
 		Animation::Track *const *tracks_ptr = tracks.ptr();
 		int count = tracks.size();
@@ -1189,8 +1202,9 @@ void AnimationMixer::_blend_calc_total_weight() {
 				continue;
 			}
 			Animation::TypeHash thash = animation_track->thash;
+			Animation::TypeBucket hbucket_index = animation_track->hbucket_index;
 			TrackCache *track = track_num_to_track_cache[i];
-			if (track == nullptr || processed_hashes.has(thash)) {
+			if (track == nullptr || (processed_hashes.has(thash) && processed_buckets.has(hbucket_index))) {
 				// No path, but avoid error spamming.
 				// Or, there is the case different track type with same path; These can be distinguished by hash. So don't add the weight doubly.
 				continue;
@@ -1199,7 +1213,12 @@ void AnimationMixer::_blend_calc_total_weight() {
 			ERR_CONTINUE(blend_idx < 0 || blend_idx >= track_count);
 			real_t blend = blend_idx < track_weights_count ? track_weights_ptr[blend_idx] * weight : weight;
 			track->total_weight += blend;
-			processed_hashes.insert(thash);
+
+			processed_buckets.insert(hbucket_index);
+			AHashBucket *bucket = track_cache[thash];
+			if (processed_buckets.size() == bucket ->size()) {
+				processed_hashes.insert(thash);
+			}
 		}
 	}
 }
@@ -1879,7 +1898,7 @@ void AnimationMixer::_blend_process(double p_delta, bool p_update_only) {
 void AnimationMixer::_blend_apply() {
 	// Finally, set the tracks.
 	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			TrackCache *track = K2.value;
 			bool is_zero_amount = Math::is_zero_approx(track->total_weight);
 			if (!deterministic && is_zero_amount) {
@@ -2154,7 +2173,7 @@ bool AnimationMixer::can_apply_reset() const {
 
 void AnimationMixer::_build_backup_track_cache() {
 	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeHash, TrackCache *> &K2 : *K1.value) {
+		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			TrackCache *track = K2.value;
 			track->total_weight = 1.0;
 			switch (track->type) {
@@ -2343,9 +2362,9 @@ void AnimationMixer::capture(const StringName &p_name, double p_duration, Tween:
 		}
 		if (reference_animation->track_get_type(i) == Animation::TYPE_VALUE && reference_animation->value_track_get_update_mode(i) == Animation::UPDATE_CAPTURE) {
 			Animation::TypeHash thash = reference_animation->track_get_type_hash(i);
-			Animation::TypeHash tsubhash = reference_animation->track_get_type_subhash(i);
+			Animation::TypeBucket hbucket_index = reference_animation->track_get_hash_bucket_index(i);
 			AHashBucket *bucket = track_cache[thash];
-			TrackCacheValue *t = static_cast<TrackCacheValue *>(bucket->get(tsubhash));
+			TrackCacheValue *t = static_cast<TrackCacheValue *>(bucket->get(hbucket_index));
 			Object *t_obj = ObjectDB::get_instance(t->object_id);
 			if (t_obj) {
 				Variant value = t_obj->get_indexed(t->subpath);
@@ -2537,7 +2556,7 @@ void AnimatedValuesBackup::set_data(const AnimationMixer::AHashBucketMap p_data)
 	for (const KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &E1 : p_data) {
 		AnimationMixer::AHashBucket *bucket = memnew(AnimationMixer::AHashBucket);
 		data.insert(E1.key, bucket);
-		for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E2 : *E1.value) {
+		for (const KeyValue<Animation::TypeBucket, AnimationMixer::TrackCache *> &E2 : *E1.value) {
 			AnimationMixer::TrackCache *track = get_cache_copy(E2.value);
 			if (!track) {
 				continue; // Some types of tracks do not get a copy and must be ignored.
@@ -2556,7 +2575,7 @@ AnimationMixer::AHashBucketMap AnimatedValuesBackup::get_data() const {
 	for (const KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &E1 : data) {
 		AnimationMixer::AHashBucket *bucket = memnew(AnimationMixer::AHashBucket);
 		ret.insert(E1.key, bucket);
-		for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &E2 : *E1.value) {
+		for (const KeyValue<Animation::TypeBucket, AnimationMixer::TrackCache *> &E2 : *E1.value) {
 			AnimationMixer::TrackCache *track = get_cache_copy(E2.value);
 			ERR_CONTINUE(!track); // Backup shouldn't contain tracks that cannot be copied, this is a mistake.
 			bucket->insert(E2.key, track);
@@ -2571,7 +2590,7 @@ AnimationMixer::AHashBucketMap AnimatedValuesBackup::get_data() const {
 
 void AnimatedValuesBackup::clear_data() {
 	for (KeyValue<Animation::TypeHash, AnimationMixer::AHashBucket *> &K1 : data) {
-		for (KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K2 : *K1.value) {
+		for (KeyValue<Animation::TypeBucket, AnimationMixer::TrackCache *> &K2 : *K1.value) {
 			memdelete(K2.value);
 		}
 		memdelete(K1.value);

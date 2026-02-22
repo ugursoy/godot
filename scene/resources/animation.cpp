@@ -1065,7 +1065,7 @@ void Animation::_track_update_hash(int p_track) {
 	const NodePath &track_path = tracks[p_track]->path;
 	const TrackType track_cache_type = get_cache_type(tracks[p_track]->type);
 	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
-	tracks[p_track]->tsubhash = HashMapHasherDefault::hash(track_path);
+	tracks[p_track]->hbucket_index = track_randomize_hash_bucket_index(p_track);
 }
 
 Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
@@ -1073,9 +1073,15 @@ Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
 	return tracks[p_track]->thash;
 }
 
-Animation::TypeHash Animation::track_get_type_subhash(int p_track) const {
+Animation::TypeBucket Animation::track_get_hash_bucket_index(int p_track) const {
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
-	return tracks[p_track]->tsubhash;
+	return tracks[p_track]->hbucket_index;
+}
+
+Animation::TypeBucket Animation::track_randomize_hash_bucket_index(int p_track)
+{
+	tracks[p_track]->hbucket_index = TypeBucket(rand());
+	return tracks[p_track]->hbucket_index;
 }
 
 void Animation::track_set_interpolation_type(int p_track, InterpolationType p_interp) {

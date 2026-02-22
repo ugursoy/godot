@@ -200,7 +200,7 @@ protected:
 		}
 	};
 
-	typedef AHashMap<Animation::TypeHash, TrackCache*, HashHasher> AHashBucket;
+	typedef AHashMap<Animation::TypeBucket, TrackCache*, HashHasher> AHashBucket;
 	typedef AHashMap<Animation::TypeHash, AHashBucket*, HashHasher> AHashBucketMap;
 
 	struct RootMotionCache {
