@@ -151,6 +151,7 @@ protected:
 		int blend_idx = -1;
 		ObjectID object_id;
 		real_t total_weight = 0.0;
+		bool cached = false;
 		TrackCache* next = nullptr;
 		TrackCache* prev = nullptr;
 

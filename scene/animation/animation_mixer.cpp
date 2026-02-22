@@ -574,7 +574,7 @@ void AnimationMixer::_clear_caches() {
 	_init_root_motion_cache();
 	_clear_audio_streams();
 	_clear_playing_caches();
-	for (KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
 		TrackCache *track = K.value;
 		while (track) {
 			TrackCache *temp = track;
@@ -631,11 +631,22 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 
 	track_num_to_track_cache.resize(tracks.size());
 	for (uint32_t i = 0; i < tracks.size(); i++) {
-		TrackCache **track_ptr = track_cache.getptr(tracks[i]->thash);
-		if (track_ptr == nullptr) {
+		const Animation::TypeHash &thash = tracks[i]->thash;
+		const NodePath &path = tracks[i]->path;
+		TrackCache *track = track_cache[thash];
+
+		if (track == nullptr) {
+			// Hash miss, definitely null
 			track_num_to_track_cache[i] = nullptr;
 		} else {
-			track_num_to_track_cache[i] = *track_ptr;
+			// Hash hit. Can be a single pointer or linked list.
+			while (track->next) {
+				if (track->path == path) {
+					break;
+				}
+				track = track->next;
+			}
+			track_num_to_track_cache[i] = track;
 		}
 	}
 }
@@ -684,24 +695,24 @@ bool AnimationMixer::_update_caches() {
 			if (!anim->track_is_enabled(i)) {
 				continue;
 			}
-			NodePath path = anim->track_get_path(i);
-			Animation::TypeHash thash = anim->track_get_type_hash(i);
+			const NodePath &path = anim->track_get_path(i);
+			const Animation::TypeHash &thash = anim->track_get_type_hash(i);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
 				track = track_cache.get(thash);
-				while (track->next) {
-					if (track->path == path) {
-						break;
-					}
+				// If it is cached already, it is a different TrackCache with same hash, so check the linked list
+				if (track->cached) {
 					track = track->next;
+					while (track) {
+						if (track->path == path) {
+							break;
+						}
+						track = track->next;
+					}
 				}
-				if (track == nullptr) {
-					WARN_PRINT_ED("Track hash was found but paths mismatch.");
-				}
-
 			}
 
 			// If not valid, delete track.
@@ -932,7 +943,18 @@ bool AnimationMixer::_update_caches() {
 					}
 				}
 				track->path = path;
-				track_cache[thash] = track;
+				if (track_cache.has(thash)) {
+					TrackCache *temp = track_cache[thash];
+					while (temp->next) {
+						temp = temp->next;
+					}
+					temp->next = track;
+					track->prev = temp;
+				}
+				else {
+					track_cache[thash] = track;
+				}
+				track->cached = true;
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -992,8 +1014,8 @@ bool AnimationMixer::_update_caches() {
 	}
 
 	while (to_delete.front()) {
-		Animation::TypeHash thash = to_delete.front()->get().first;
-		int chain_index = to_delete.front()->get().second;
+		const Animation::TypeHash &thash = to_delete.front()->get().first;
+		int &chain_index = to_delete.front()->get().second;
 		TrackCache *track = track_cache[thash];
 		while (chain_index > 0) {
 			track = track->next;
@@ -1029,7 +1051,7 @@ bool AnimationMixer::_update_caches() {
 		}
 	}
 
-	for (KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
 		TrackCache *track = K.value;
 		while (track) {
 			track->blend_idx = track_map[track->path];
@@ -1224,7 +1246,7 @@ void AnimationMixer::_blend_calc_total_weight() {
 			if (!animation_track->enabled) {
 				continue;
 			}
-			Animation::TypeHash thash = animation_track->thash;
+			const Animation::TypeHash &thash = animation_track->thash;
 			TrackCache *track = track_num_to_track_cache[i];
 			if (track == nullptr || processed_hashes.has(thash)) {
 				// No path, but avoid error spamming.
@@ -2618,7 +2640,7 @@ AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> Animated
 				ret.insert(E.key, root_track);
 			}
 			p_track_cache = p_track_cache->next;
-		} while (p_track_cache->next);
+		} while (p_track_cache);
 	}
 	return ret;
 }
