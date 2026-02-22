@@ -41,7 +41,7 @@ class Animation : public Resource {
 
 public:
 	typedef uint32_t TypeHash;
-	typedef uint32_t TypeBucket;
+	typedef uint8_t TypeBucket;
 
 	static inline String PARAMETERS_BASE_PATH = "parameters/";
 	static constexpr real_t DEFAULT_STEP = 1.0 / 30;
