@@ -680,13 +680,19 @@ bool AnimationMixer::_update_caches() {
 				continue;
 			}
 			NodePath path = anim->track_get_path(i);
-			Animation::TypeHash thash = anim->track_get_type_hash(i);
+			const Animation::TypeHash &thash = anim->track_get_type_hash(i);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
 				track = track_cache.get(thash);
+				if (track->path != path) {
+					// Collision
+					while (track_cache.has(thash)) {
+						anim->track_probe_hash(i);
+					}
+				}
 			}
 
 			// If not valid, delete track.
@@ -953,7 +959,7 @@ bool AnimationMixer::_update_caches() {
 	}
 
 	while (to_delete.front()) {
-		Animation::TypeHash thash = to_delete.front()->get();
+		const Animation::TypeHash &thash = to_delete.front()->get();
 		memdelete(track_cache[thash]);
 		track_cache.erase(thash);
 		to_delete.pop_front();
@@ -1156,7 +1162,7 @@ void AnimationMixer::_blend_calc_total_weight() {
 			if (!animation_track->enabled) {
 				continue;
 			}
-			Animation::TypeHash thash = animation_track->thash;
+			const Animation::TypeHash &thash = animation_track->thash;
 			TrackCache *track = track_num_to_track_cache[i];
 			if (track == nullptr || processed_hashes.has(thash)) {
 				// No path, but avoid error spamming.
