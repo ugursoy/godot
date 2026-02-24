@@ -574,15 +574,19 @@ void AnimationMixer::_clear_caches() {
 	_init_root_motion_cache();
 	_clear_audio_streams();
 	_clear_playing_caches();
-	for (KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
-			memdelete(K2.value);
+	for (KeyValue<Animation::TypeHash, HashBucket> &K : track_cache) {
+		HashBucket hbucket = K.value;
+		if (bucket_keys.has(K.key)) {
+			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket.bucket) {
+				memdelete(B.value);
+			}
+			hbucket.bucket->clear();
+		} else {
+			memdelete(hbucket.cache);
 		}
-		// memdelete(K1.value);
-		K1.value->clear();
 	}
 	track_cache.clear();
-	track_cache_size = 0;
+	bucket_keys.clear();
 	animation_track_num_to_track_cache.clear();
 	cache_valid = false;
 	capture_cache.clear();
@@ -631,12 +635,17 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 
 	track_num_to_track_cache.resize(tracks.size());
 	for (uint32_t i = 0; i < tracks.size(); i++) {
-		AHashBucket *bucket_ptr = track_cache[tracks[i]->thash];
-		TrackCache **track_ptr = bucket_ptr->getptr(tracks[i]->hbucket_index);
+		HashBucket hbucket = track_cache[tracks[i]->thash];
+		TrackCache *track_ptr;
+		if (bucket_keys.has(tracks[i]->thash)) {
+			track_ptr = hbucket.bucket->get(tracks[i]->hbucket_index);
+		} else {
+			track_ptr = hbucket.cache;
+		}
 		if (track_ptr == nullptr) {
 			track_num_to_track_cache[i] = nullptr;
 		} else {
-			track_num_to_track_cache[i] = *track_ptr;
+			track_num_to_track_cache[i] = track_ptr;
 		}
 	}
 }
@@ -693,9 +702,11 @@ bool AnimationMixer::_update_caches() {
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
-				AHashBucket *bucket_ptr = track_cache.get(thash);
-				if (bucket_ptr && bucket_ptr->has(hbucket_index)) {
-					track = bucket_ptr->get(hbucket_index);
+				HashBucket hbucket = track_cache[thash];
+				if (bucket_keys.has(thash)) {
+					track = hbucket.bucket->get(hbucket_index);
+				} else {
+					track = hbucket.cache;
 				}
 			}
 
@@ -703,10 +714,16 @@ bool AnimationMixer::_update_caches() {
 			if (track && (track->type != track_cache_type || ObjectDB::get_instance(track->object_id) == nullptr)) {
 				playing_caches.erase(track);
 				memdelete(track);
-				AHashBucket *bucket_ptr = track_cache.get(thash);
-				bucket_ptr->erase(hbucket_index);
-				if (bucket_ptr->is_empty()) {
-					memdelete(bucket_ptr);
+				HashBucket hbucket = track_cache[thash];
+				if (bucket_keys.has(thash)) {
+					hbucket.bucket->erase(hbucket_index);
+					if (hbucket.bucket->size() == 1) {
+						TrackCache *t = hbucket.bucket->last()->value;
+						memdelete(hbucket.bucket);
+						hbucket.cache = t;
+					}
+				} else {
+					memdelete(hbucket.cache);
 					track_cache.erase(thash);
 				}
 				track = nullptr;
@@ -919,25 +936,24 @@ bool AnimationMixer::_update_caches() {
 					}
 				}
 				track->path = path;
-
-				AHashBucket *bucket_ptr;
 				if (track_cache.has(thash)) {
-					bucket_ptr = track_cache[thash];
-				} else {
-					// pool size must be equal to slot size
-					while(bucket_pool.size() < track_cache.size() + 1) {
-						bucket_ptr = memnew(AHashBucket);
-						bucket_pool.insert(track_cache.size(), bucket_ptr);
+					HashBucket hbucket;
+					hbucket = track_cache[thash];
+					if (!bucket_keys.has(thash)) {
+						TrackCache *t = hbucket.cache;
+						hbucket.bucket = memnew(Bucket);
+						hbucket.bucket->insert(t->bucket_index, t);
+						bucket_keys.insert(thash);
 					}
-					bucket_ptr = bucket_pool[track_cache.size()];
-					track_cache[thash] = bucket_ptr;
+					while (hbucket_index == 0 || hbucket.bucket->has(hbucket_index)) {
+						hbucket_index = anim->track_randomize_hash_bucket_index(i);
+					}
+					hbucket.bucket->insert(hbucket_index, track);
+				} else {
+					track_cache[thash].cache = track;
 				}
-				// In case there are hits in the bucket, re-randomize the index
-				while (bucket_ptr->has(hbucket_index)) {
-					hbucket_index = anim->track_randomize_hash_bucket_index(i);
-				}
-				bucket_ptr->insert(hbucket_index, track);
-				track_cache_size++;
+				track->bucket_index = hbucket_index;
+
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -979,10 +995,17 @@ bool AnimationMixer::_update_caches() {
 
 	List<Pair<Animation::TypeHash, Animation::TypeBucket>> to_delete;
 
-	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
-			if (K2.value->setup_pass != setup_pass) {
-				to_delete.push_back(Pair(K1.key, K2.key));
+	for (KeyValue<Animation::TypeHash, HashBucket> &K : track_cache) {
+		HashBucket hbucket = K.value;
+		if (bucket_keys.has(K.key)) {
+			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket.bucket) {
+				if (B.value->setup_pass != setup_pass) {
+					to_delete.push_back(Pair(K.key, B.key));
+				}
+			}
+		} else {
+			if (hbucket.cache->setup_pass != setup_pass) {
+				to_delete.push_back(Pair(K.key, Animation::TypeBucket(0)));
 			}
 		}
 	}
@@ -991,32 +1014,51 @@ bool AnimationMixer::_update_caches() {
 		Animation::TypeHash thash = to_delete.front()->get().first;
 		Animation::TypeBucket bucket_index = to_delete.front()->get().second;
 
-		AHashBucket *bucket = track_cache[thash];
-		memdelete(&bucket[bucket_index]);
-		bucket->erase(bucket_index);
-
-		if (bucket->is_empty()) {
-			memdelete(&bucket);
+		HashBucket hbucket = track_cache[thash];
+		if (bucket_index != 0 && hbucket.bucket->size() > 1) {
+			hbucket.bucket->erase(bucket_index);
+			if (hbucket.bucket->size() == 1) {
+				TrackCache *t = hbucket.bucket->last()->value;
+				memdelete(hbucket.bucket);
+				hbucket.cache = t;
+			}
+		} else {
+			memdelete(hbucket.cache);
 			track_cache.erase(thash);
+			bucket_keys.erase(thash);
 		}
-
 		to_delete.pop_front();
 	}
 
 	track_map.clear();
 
 	int idx = 0;
-	for (const KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (const KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
-			track_map[K2.value->path] = idx;
-			idx++;
+	for (KeyValue<Animation::TypeHash, HashBucket> &K : track_cache) {
+		HashBucket hbucket = K.value;
+		if (bucket_keys.has(K.key)) {
+			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket.bucket) {
+				if (B.value->setup_pass != setup_pass) {
+					track_map[B.value->path] = idx;
+				}
+			}
+		} else {
+			track_map[hbucket.cache->path] = idx;
 		}
+		idx++;
 	}
 
-	for (KeyValue<Animation::TypeHash, AHashBucket *> &K1 : track_cache) {
-		for (KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
-			K2.value->blend_idx = track_map[K2.value->path];
+	for (KeyValue<Animation::TypeHash, HashBucket> &K : track_cache) {
+		HashBucket hbucket = K.value;
+		if (bucket_keys.has(K.key)) {
+			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket.bucket) {
+				if (B.value->setup_pass != setup_pass) {
+					B.value->blend_idx = track_map[B.value->path];
+				}
+			}
+		} else {
+			hbucket.cache->blend_idx = track_map[hbucket.cache->path];
 		}
+		idx++;
 	}
 
 	animation_track_num_to_track_cache.clear();
@@ -1026,22 +1068,6 @@ bool AnimationMixer::_update_caches() {
 	}
 
 	track_count = idx;
-
-	// bucket_pool's size must be greater or equal to slot size
-	// and less than or equal to track_cache_size
-	const uint32_t bucket_pool_size = bucket_pool.size();
-	const uint32_t slot_size = track_cache.size();
-	if (bucket_pool_size < slot_size) {
-		bucket_pool.resize(slot_size);
-	}
-	else if (bucket_pool_size > track_cache_size) {
-		int diff = bucket_pool_size - track_cache_size;
-		while (diff > 0) {
-			memdelete(bucket_pool[bucket_pool.size() - 1]);
-			diff--;
-		}
-		bucket_pool.resize(track_cache_size);
-	}
 
 	cache_valid = true;
 
@@ -1238,9 +1264,13 @@ void AnimationMixer::_blend_calc_total_weight() {
 			real_t blend = blend_idx < track_weights_count ? track_weights_ptr[blend_idx] * weight : weight;
 			track->total_weight += blend;
 
-			processed_buckets.insert(hbucket_index);
-			AHashBucket *bucket = track_cache[thash];
-			if (processed_buckets.size() == bucket ->size()) {
+			HashBucket bucket = track_cache[thash];
+			if (bucket_keys.has(thash)) {
+				processed_buckets.insert(hbucket_index);
+				if (processed_buckets.size() == bucket.bucket->size()) {
+					processed_hashes.insert(thash);
+				}
+			} else {
 				processed_hashes.insert(thash);
 			}
 		}

@@ -148,6 +148,7 @@ protected:
 		uint64_t setup_pass = 0;
 		Animation::TrackType type = Animation::TrackType::TYPE_ANIMATION;
 		NodePath path;
+		Animation::TypeBucket bucket_index;
 		int blend_idx = -1;
 		ObjectID object_id;
 		real_t total_weight = 0.0;
@@ -200,8 +201,12 @@ protected:
 		}
 	};
 
-	typedef AHashMap<Animation::TypeBucket, TrackCache*, HashHasher> AHashBucket;
-	typedef AHashMap<Animation::TypeHash, AHashBucket*, HashHasher> AHashBucketMap;
+	typedef AHashMap<Animation::TypeBucket, TrackCache *, HashHasher> Bucket;
+	union HashBucket {
+		TrackCache *cache;
+		Bucket *bucket;
+	};
+	typedef AHashMap<Animation::TypeHash, HashBucket, HashHasher> AHashBucketMap;
 
 	struct RootMotionCache {
 		Vector3 loc = Vector3(0, 0, 0);
@@ -308,8 +313,7 @@ protected:
 
 	RootMotionCache root_motion_cache;
 	AHashBucketMap track_cache;
-	uint32_t track_cache_size;
-	LocalVector<AHashBucket *> bucket_pool;
+	HashSet<Animation::TypeHash> bucket_keys;
 	AHashMap<Ref<Animation>, LocalVector<TrackCache *>> animation_track_num_to_track_cache;
 	HashSet<TrackCache *> playing_caches;
 	Vector<Node *> playing_audio_stream_players;
