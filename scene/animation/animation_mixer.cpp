@@ -578,9 +578,11 @@ void AnimationMixer::_clear_caches() {
 		for (KeyValue<Animation::TypeBucket, TrackCache *> &K2 : *K1.value) {
 			memdelete(K2.value);
 		}
-		memdelete(K1.value);
+		// memdelete(K1.value);
+		K1.value->clear();
 	}
 	track_cache.clear();
+	track_cache_size = 0;
 	animation_track_num_to_track_cache.clear();
 	cache_valid = false;
 	capture_cache.clear();
@@ -922,7 +924,12 @@ bool AnimationMixer::_update_caches() {
 				if (track_cache.has(thash)) {
 					bucket_ptr = track_cache[thash];
 				} else {
-					bucket_ptr = memnew(AHashBucket);
+					// pool size must be equal to slot size
+					while(bucket_pool.size() < track_cache.size() + 1) {
+						bucket_ptr = memnew(AHashBucket);
+						bucket_pool.insert(track_cache.size(), bucket_ptr);
+					}
+					bucket_ptr = bucket_pool[track_cache.size()];
 					track_cache[thash] = bucket_ptr;
 				}
 				// In case there are hits in the bucket, re-randomize the index
@@ -930,6 +937,7 @@ bool AnimationMixer::_update_caches() {
 					hbucket_index = anim->track_randomize_hash_bucket_index(i);
 				}
 				bucket_ptr->insert(hbucket_index, track);
+				track_cache_size++;
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -1018,6 +1026,22 @@ bool AnimationMixer::_update_caches() {
 	}
 
 	track_count = idx;
+
+	// bucket_pool's size must be greater or equal to slot size
+	// and less than or equal to track_cache_size
+	const uint32_t bucket_pool_size = bucket_pool.size();
+	const uint32_t slot_size = track_cache.size();
+	if (bucket_pool_size < slot_size) {
+		bucket_pool.resize(slot_size);
+	}
+	else if (bucket_pool_size > track_cache_size) {
+		int diff = bucket_pool_size - track_cache_size;
+		while (diff > 0) {
+			memdelete(bucket_pool[bucket_pool.size() - 1]);
+			diff--;
+		}
+		bucket_pool.resize(track_cache_size);
+	}
 
 	cache_valid = true;
 

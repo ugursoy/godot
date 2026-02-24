@@ -308,6 +308,8 @@ protected:
 
 	RootMotionCache root_motion_cache;
 	AHashBucketMap track_cache;
+	uint32_t track_cache_size;
+	LocalVector<AHashBucket *> bucket_pool;
 	AHashMap<Ref<Animation>, LocalVector<TrackCache *>> animation_track_num_to_track_cache;
 	HashSet<TrackCache *> playing_caches;
 	Vector<Node *> playing_audio_stream_players;
