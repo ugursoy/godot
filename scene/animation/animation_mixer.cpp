@@ -680,17 +680,22 @@ bool AnimationMixer::_update_caches() {
 				continue;
 			}
 			NodePath path = anim->track_get_path(i);
-			const Animation::TypeHash &thash = anim->track_get_type_hash(i);
+			Animation::TypeHash thash = anim->track_get_type_hash(i);
+			Animation::TypeHash bhash = anim->track_get_base_hash(i);
+			Animation::TypeHash rhash = anim->track_get_random_hash(i);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
+				// We have this track processed. This is the case if:
+				//	1. The track is a part of the grouped track type. TrackCache groups similar types like position/rotation/scale into one object.
+				//	2. A hash collision. This is a completetly irrelevant track but yields the same hash.
 				track = track_cache.get(thash);
 				if (track->path != path) {
-					// Collision
+					// Collision!
 					while (track_cache.has(thash)) {
-						anim->track_probe_hash(i);
+						thash = anim->track_probe_hash(i);
 					}
 				}
 			}
@@ -910,6 +915,8 @@ bool AnimationMixer::_update_caches() {
 					}
 				}
 				track->path = path;
+				track->rhash = rhash;
+				track->bhash = bhash;
 				track_cache[thash] = track;
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);

@@ -1061,20 +1061,21 @@ Animation::TrackType Animation::get_cache_type(TrackType p_type) {
 	return p_type;
 }
 
+#define BHASH_SALT_PREPEND "HASH"
+#define BHASH_SALT_APPEND "SALT"
+
 void Animation::_track_update_hash(int p_track) {
 	const NodePath &track_path = tracks[p_track]->path;
 	const TrackType track_cache_type = get_cache_type(tracks[p_track]->type);
-	tracks[p_track]->bhash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
-	// Initially, bhash = thash
-	tracks[p_track]->thash = tracks[p_track]->bhash;
+	tracks[p_track]->bhash = HashMapHasherDefault::hash(BHASH_SALT_PREPEND + String(track_path) + BHASH_SALT_APPEND);
+	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
+	tracks[p_track]->rhash = hash_murmur3_one_32(tracks[p_track]->bhash);
 }
 
-void Animation::track_probe_hash(int p_track) {
+Animation::TypeHash Animation::track_probe_hash(int p_track) {
 	WARN_PRINT("Re-probing hash for track: " + String::num(p_track));
-	const Animation::TypeHash &probe = tracks[p_track]->probe;
-	const Animation::TypeHash &thash = tracks[p_track]->thash;
-	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const Animation::TypeHash &, const Animation::TypeHash &>(thash, probe));
-	tracks[p_track]->probe++;
+	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const Animation::TypeHash &, const Animation::TypeHash &>(tracks[p_track]->thash, tracks[p_track]->probe++));
+	return tracks[p_track]->thash;
 }
 
 Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
@@ -1085,6 +1086,11 @@ Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
 Animation::TypeHash Animation::track_get_base_hash(int p_track) const {
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
 	return tracks[p_track]->bhash;
+}
+
+Animation::TypeHash Animation::track_get_random_hash(int p_track) const {
+	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
+	return tracks[p_track]->rhash;
 }
 
 void Animation::track_set_interpolation_type(int p_track, InterpolationType p_interp) {

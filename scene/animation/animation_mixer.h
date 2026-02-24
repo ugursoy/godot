@@ -147,6 +147,8 @@ protected:
 		bool root_motion = false;
 		uint64_t setup_pass = 0;
 		Animation::TrackType type = Animation::TrackType::TYPE_ANIMATION;
+		Animation::TypeHash rhash;
+		Animation::TypeHash bhash;
 		NodePath path;
 		int blend_idx = -1;
 		ObjectID object_id;
