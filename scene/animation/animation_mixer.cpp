@@ -574,7 +574,7 @@ void AnimationMixer::_clear_caches() {
 	_init_root_motion_cache();
 	_clear_audio_streams();
 	_clear_playing_caches();
-	for (KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
 		memdelete(K.value);
 	}
 	track_cache.clear();
@@ -979,7 +979,7 @@ bool AnimationMixer::_update_caches() {
 		idx++;
 	}
 
-	for (KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, TrackCache *> &K : track_cache) {
 		K.value->blend_idx = track_map[K.value->path];
 	}
 
@@ -1175,7 +1175,7 @@ void AnimationMixer::_blend_calc_total_weight() {
 				// Or, there is the case different track type with same path; These can be distinguished by hash. So don't add the weight doubly.
 				continue;
 			}
-			int blend_idx = track->blend_idx;
+			const int &blend_idx = track->blend_idx;
 			ERR_CONTINUE(blend_idx < 0 || blend_idx >= track_count);
 			real_t blend = blend_idx < track_weights_count ? track_weights_ptr[blend_idx] * weight : weight;
 			track->total_weight += blend;
@@ -2529,7 +2529,7 @@ AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> Animated
 }
 
 void AnimatedValuesBackup::clear_data() {
-	for (KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K : data) {
+	for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K : data) {
 		memdelete(K.value);
 	}
 	data.clear();

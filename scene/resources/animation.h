@@ -109,13 +109,11 @@ public:
 		InterpolationType interpolation = INTERPOLATION_LINEAR;
 		bool loop_wrap = true;
 		NodePath path; // Path to something.
-		StringName tpath; // Path to something.
 		TypeHash thash = 0; // Hash by Path + SubPath + TrackType.
 		TypeHash probe = 0; // Probe value that will be added later to the hash on hash collisions
 		bool imported = false;
 		bool enabled = true;
 		TypeHash get_path_hash() { return path.path_hash(); }
-		TypeHash get_subpath_hash() { return path.subpath_hash(); }
 		virtual ~Track() {}
 	};
 
@@ -427,7 +425,6 @@ public:
 	TypeHash track_probe_hash(int p_track);
 	TypeHash track_get_type_hash(int p_track) const;
 	TypeHash track_get_path_hash(int p_track) const;
-	TypeHash track_get_subpath_hash(int p_track) const;
 
 	void track_move_up(int p_track);
 	void track_move_down(int p_track);
