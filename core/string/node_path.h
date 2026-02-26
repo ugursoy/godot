@@ -45,8 +45,6 @@ class [[nodiscard]] NodePath {
 		bool absolute;
 		mutable bool hash_cache_valid;
 		mutable uint32_t hash_cache;
-		mutable uint32_t path_hash_cache;
-		mutable uint32_t subpath_hash_cache;
 	};
 
 	mutable Data *data = nullptr;
@@ -89,17 +87,7 @@ public:
 		if (!data->hash_cache_valid) {
 			_update_hash_cache();
 		}
-		return data->path_hash_cache;
-	}
-
-	_FORCE_INLINE_ uint32_t subpath_hash() const {
-		if (!data) {
-			return 0;
-		}
-		if (!data->hash_cache_valid) {
-			_update_hash_cache();
-		}
-		return data->subpath_hash_cache;
+		return is_absolute() ? data->concatenated_path.hash() : ~data->concatenated_path.hash();
 	}
 
 	explicit operator String() const;

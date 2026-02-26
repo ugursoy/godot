@@ -148,7 +148,7 @@ protected:
 		uint64_t setup_pass = 0;
 		Animation::TrackType type = Animation::TrackType::TYPE_ANIMATION;
 		NodePath path;
-		Animation::TypeBucket bucket_hash;
+		Animation::TypeBucket bucket_index = 0;
 		int blend_idx = -1;
 		ObjectID object_id;
 		real_t total_weight = 0.0;
@@ -216,9 +216,9 @@ protected:
 		TrackCache *get_track_cache() {
 			return cache.single;
 		}
-		static Animation::TypeBucket get_bucket_hash(Animation::TypeHash path_hash, Animation::TypeHash subpath_hash) {
-			return (Animation::TypeBucket(path_hash) << 32) | Animation::TypeBucket(subpath_hash);
-		}
+		// static Animation::TypeBucket get_bucket_hash(Animation::TypeHash path_hash, Animation::TypeHash subpath_hash) {
+		// 	return (Animation::TypeBucket(path_hash) << 32) | Animation::TypeBucket(subpath_hash);
+		// }
 
 		void set_track_cache(TrackCache *new_cache) {
 			cache.single = new_cache;
@@ -251,12 +251,12 @@ protected:
 				TrackCache *current = cache.single;
 				cache.bucket = memnew(Bucket);
 				if (current) {
-					cache.bucket->insert(current->bucket_hash, current);
+					cache.bucket->insert(current->path.path_hash(), current);
 				}
 			}
 		}
 
-		bool is_processed() {
+		bool is_processed() const{
 			if (is_bucket) {
 				return processed_bucket_elements == cache.bucket->size();
 			}

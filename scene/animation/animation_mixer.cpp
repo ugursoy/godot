@@ -573,10 +573,10 @@ void AnimationMixer::_clear_caches() {
 	_init_root_motion_cache();
 	_clear_audio_streams();
 	_clear_playing_caches();
-	for (KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
 		HashBucket *hbucket = K.value;
 		if (hbucket->is_bucket) {
-			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
+			for (const KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
 				memdelete(B.value);
 			}
 			memdelete(hbucket->get_bucket());;
@@ -637,9 +637,8 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 		TrackCache *track_ptr;
 		HashBucket *hbucket = track_cache[tracks[i]->thash];
 		if (hbucket->is_bucket) {
-			const Animation::TypeHash &phash = tracks[i]->path_hash;
-			const Animation::TypeHash &sphash = tracks[i]->subpath_hash;
-			track_ptr = hbucket->get_bucket()->get(hbucket->get_bucket_hash(phash, sphash));
+			const Animation::TypeHash &phash = tracks[i]->get_path_hash();
+			track_ptr = hbucket->get_bucket()->get(phash);
 		} else {
 			track_ptr = hbucket->get_track_cache();
 		}
@@ -698,9 +697,7 @@ bool AnimationMixer::_update_caches() {
 			}
 			NodePath path = anim->track_get_path(i);
 			const Animation::TypeHash &phash = path.path_hash();
-			const Animation::TypeHash &sphash = path.subpath_hash();
 			const Animation::TypeHash &thash = anim->track_get_type_hash(i);
-			const Animation::TypeBucket bucket_hash = HashBucket::get_bucket_hash(phash, sphash);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
@@ -708,12 +705,11 @@ bool AnimationMixer::_update_caches() {
 			if (track_cache.has(thash)) {
 				HashBucket *hbucket = track_cache[thash];
 				if (hbucket->is_bucket) {
-					track = hbucket->get_bucket()->get(bucket_hash);
+					track = hbucket->get_bucket()->get(phash);
 				} else {
 					track = hbucket->get_track_cache();
 				}
-				bool is_same = track->bucket_hash == bucket_hash;
-				if (track->path != path) {
+				if (track->path.path_hash() != phash) {
 					// Collision. This is a new track.
 					track = nullptr;
 				}
@@ -725,7 +721,7 @@ bool AnimationMixer::_update_caches() {
 				memdelete(track);
 				HashBucket *hbucket = track_cache[thash];
 				if (hbucket->is_bucket) {
-					hbucket->erase_bucket_index(bucket_hash);
+					hbucket->erase_bucket_index(phash);
 				} else {
 					hbucket->erase_track_cache();
 					track_cache.erase(thash);
@@ -944,12 +940,11 @@ bool AnimationMixer::_update_caches() {
 					// Hash collision, convert the current HashBucket into an actual bucket and add elements to it
 					HashBucket *hbucket = track_cache[thash];
 					hbucket->convert_to_bucket();
-					hbucket->add_track_cache(bucket_hash, track);
+					hbucket->add_track_cache(phash, track);
 				} else {
 					track_cache[thash] = memnew(HashBucket);
 					track_cache[thash]->set_track_cache(track);
 				}
-				track->bucket_hash = bucket_hash;
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -991,10 +986,10 @@ bool AnimationMixer::_update_caches() {
 
 	List<Pair<Animation::TypeHash, Animation::TypeBucket>> to_delete;
 
-	for (KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
 		HashBucket *hbucket = K.value;
 		if (hbucket->is_bucket) {
-			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
+			for (const KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
 				if (B.value->setup_pass != setup_pass) {
 					to_delete.push_back(Pair(K.key, B.key));
 				}
@@ -1023,10 +1018,10 @@ bool AnimationMixer::_update_caches() {
 	track_map.clear();
 
 	int idx = 0;
-	for (KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
 		HashBucket *hbucket = K.value;
 		if (hbucket->is_bucket) {
-			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
+			for (const KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
 				if (B.value->setup_pass != setup_pass) {
 					track_map[B.value->path] = idx;
 				}
@@ -1037,7 +1032,7 @@ bool AnimationMixer::_update_caches() {
 		idx++;
 	}
 
-	for (KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
+	for (const KeyValue<Animation::TypeHash, HashBucket *> &K : track_cache) {
 		HashBucket *hbucket = K.value;
 		if (hbucket->is_bucket) {
 			for (KeyValue<Animation::TypeBucket, TrackCache *> &B : *hbucket->get_bucket()) {
@@ -1243,15 +1238,14 @@ void AnimationMixer::_blend_calc_total_weight() {
 			if (!animation_track->enabled) {
 				continue;
 			}
-			Animation::TypeHash thash = animation_track->thash;
-			Animation::TypeHash path_hash = animation_track->path_hash;
+			const Animation::TypeHash &thash = animation_track->thash;
 			TrackCache *track = track_num_to_track_cache[i];
 			if (track == nullptr || processed_hashes.has(thash)) {
 				// No path, but avoid error spamming.
 				// Or, there is the case different track type with same path; These can be distinguished by hash. So don't add the weight doubly.
 				continue;
 			}
-			int blend_idx = track->blend_idx;
+			const int &blend_idx = track->blend_idx;
 			ERR_CONTINUE(blend_idx < 0 || blend_idx >= track_count);
 			real_t blend = blend_idx < track_weights_count ? track_weights_ptr[blend_idx] * weight : weight;
 			track->total_weight += blend;
@@ -2677,10 +2671,10 @@ AnimationMixer::AHashBucketMap AnimatedValuesBackup::get_data() const {
 }
 
 void AnimatedValuesBackup::clear_data() {
-	for (KeyValue<Animation::TypeHash, AnimationMixer::HashBucket *> &K : data) {
+	for (const KeyValue<Animation::TypeHash, AnimationMixer::HashBucket *> &K : data) {
 		AnimationMixer::HashBucket *hbucket = K.value;
 		if (hbucket->is_bucket) {
-			for (KeyValue<Animation::TypeBucket, AnimationMixer::TrackCache *> &B : *hbucket->get_bucket()) {
+			for (const KeyValue<Animation::TypeBucket, AnimationMixer::TrackCache *> &B : *hbucket->get_bucket()) {
 				memdelete(B.value);
 			}
 			memdelete(hbucket->get_bucket());;
