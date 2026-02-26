@@ -80,6 +80,16 @@ public:
 		return data->hash_cache;
 	}
 
+	_FORCE_INLINE_ uint32_t path_hash() const {
+		if (!data) {
+			return 0;
+		}
+		if (!data->hash_cache_valid) {
+			_update_hash_cache();
+		}
+		return is_absolute() ? data->concatenated_path.hash() : ~data->concatenated_path.hash();
+	}
+
 	explicit operator String() const;
 	bool is_empty() const;
 

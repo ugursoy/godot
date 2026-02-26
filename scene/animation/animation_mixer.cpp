@@ -632,6 +632,7 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 	track_num_to_track_cache.resize(tracks.size());
 	for (uint32_t i = 0; i < tracks.size(); i++) {
 		const Animation::TypeHash &thash = tracks[i]->thash;
+		const Animation::TypeHash &phash = tracks[i]->get_path_hash();
 		const NodePath &path = tracks[i]->path;
 		TrackCache *track = track_cache[thash];
 
@@ -641,7 +642,7 @@ void AnimationMixer::_create_track_num_to_track_cache_for_animation(Ref<Animatio
 		} else {
 			// Hash hit. Can be a single pointer or linked list.
 			while (track->next) {
-				if (track->path == path) {
+				if (track->path.path_hash() == phash) {
 					break;
 				}
 				track = track->next;
@@ -697,17 +698,18 @@ bool AnimationMixer::_update_caches() {
 			}
 			const NodePath &path = anim->track_get_path(i);
 			const Animation::TypeHash &thash = anim->track_get_type_hash(i);
+			const Animation::TypeHash &phash = anim->track_get_path_hash(i);
 			Animation::TrackType track_src_type = anim->track_get_type(i);
 			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
 				track = track_cache.get(thash);
-				// If it is cached already, it is a different TrackCache with same hash, so check the linked list
-				if (track->cached) {
+				if (track->path.path_hash() != phash) {
+					// Collision
 					track = track->next;
 					while (track) {
-						if (track->path == path) {
+						if (track->path.path_hash() == phash) {
 							break;
 						}
 						track = track->next;
@@ -954,7 +956,6 @@ bool AnimationMixer::_update_caches() {
 				else {
 					track_cache[thash] = track;
 				}
-				track->cached = true;
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);
 				if (track->setup_pass != setup_pass) {
@@ -2646,9 +2647,9 @@ AHashMap<Animation::TypeHash, AnimationMixer::TrackCache *, HashHasher> Animated
 }
 
 void AnimatedValuesBackup::clear_data() {
-	for (KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K : data) {
+	for (const KeyValue<Animation::TypeHash, AnimationMixer::TrackCache *> &K : data) {
 		AnimationMixer::TrackCache *p_track_cache = K.value;
-		while(p_track_cache->next) {
+		while (p_track_cache->next) {
 			AnimationMixer::TrackCache *temp = p_track_cache;
 			p_track_cache = p_track_cache->next;
 			memdelete(temp);

@@ -112,6 +112,7 @@ public:
 		TypeHash thash = 0; // Hash by Path + SubPath + TrackType.
 		bool imported = false;
 		bool enabled = true;
+		TypeHash get_path_hash() const { return path.path_hash(); }
 		virtual ~Track() {}
 	};
 
@@ -421,6 +422,7 @@ public:
 	int find_track(const NodePath &p_path, const TrackType p_type) const;
 
 	TypeHash track_get_type_hash(int p_track) const;
+	TypeHash track_get_path_hash(int p_track) const;
 
 	void track_move_up(int p_track);
 	void track_move_down(int p_track);

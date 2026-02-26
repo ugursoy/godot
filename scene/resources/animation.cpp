@@ -1072,6 +1072,11 @@ Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
 	return tracks[p_track]->thash;
 }
 
+Animation::TypeHash Animation::track_get_path_hash(int p_track) const {
+	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
+	return tracks[p_track]->get_path_hash();
+}
+
 void Animation::track_set_interpolation_type(int p_track, InterpolationType p_interp) {
 	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_track, tracks.size());
 	tracks[p_track]->interpolation = p_interp;
