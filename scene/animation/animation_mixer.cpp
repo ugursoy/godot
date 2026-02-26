@@ -679,22 +679,21 @@ bool AnimationMixer::_update_caches() {
 			if (!anim->track_is_enabled(i)) {
 				continue;
 			}
-			NodePath path = anim->track_get_path(i);
+			const NodePath &path = anim->track_get_path(i);
 			Animation::TypeHash thash = anim->track_get_type_hash(i);
-			Animation::TypeHash phash = anim->track_get_path_hash(i);
-			Animation::TypeHash sphash = anim->track_get_subpath_hash(i);
-			Animation::TrackType track_src_type = anim->track_get_type(i);
-			Animation::TrackType track_cache_type = Animation::get_cache_type(track_src_type);
+			const Animation::TypeHash &phash = anim->track_get_path_hash(i);
+			const Animation::TrackType &track_src_type = anim->track_get_type(i);
+			const Animation::TrackType &track_cache_type = Animation::get_cache_type(track_src_type);
 
 			TrackCache *track = nullptr;
 			if (track_cache.has(thash)) {
-				// We have this track processed. This is the case if:
-				//	1. The track is a part of the grouped track type. TrackCache groups similar types like position/rotation/scale into one object.
-				//	2. A hash collision. This is a completetly irrelevant track but yields the same hash.
-				// Get the track and compare its path to see if it is indeed the same track. Subpath should be different.
+				// We have this track processed. Either:
+				//	1. Track is in the same cache type
+				//	2. A hash collision.
+				// Get the track and compare its path_hash to see if it is indeed the same track.
 				track = track_cache.get(thash);
-				if (track->path_hash != phash) {
-					// Collision!
+				if (track->path.path_hash() != phash) {
+					// Hash Collision
 					while (track_cache.has(thash)) {
 						thash = anim->track_probe_hash(i);
 					}
@@ -917,8 +916,6 @@ bool AnimationMixer::_update_caches() {
 					}
 				}
 				track->path = path;
-				track->path_hash = phash;
-				track->subpath_hash = sphash;
 				track_cache[thash] = track;
 			} else if (track_cache_type == Animation::TYPE_POSITION_3D) {
 				TrackCacheTransform *track_xform = static_cast<TrackCacheTransform *>(track);

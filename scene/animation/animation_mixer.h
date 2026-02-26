@@ -148,8 +148,6 @@ protected:
 		uint64_t setup_pass = 0;
 		Animation::TrackType type = Animation::TrackType::TYPE_ANIMATION;
 		NodePath path;
-		Animation::TypeHash path_hash;
-		Animation::TypeHash subpath_hash;
 		int blend_idx = -1;
 		ObjectID object_id;
 		real_t total_weight = 0.0;
