@@ -148,7 +148,7 @@ protected:
 		uint64_t setup_pass = 0;
 		Animation::TrackType type = Animation::TrackType::TYPE_ANIMATION;
 		NodePath path;
-		Animation::TypeBucket bucket_index;
+		Animation::TypeBucket bucket_hash;
 		int blend_idx = -1;
 		ObjectID object_id;
 		real_t total_weight = 0.0;
@@ -202,11 +202,68 @@ protected:
 	};
 
 	typedef AHashMap<Animation::TypeBucket, TrackCache *, HashHasher> Bucket;
-	union HashBucket {
-		TrackCache *cache;
-		Bucket *bucket;
+	struct HashBucket {
+		union {
+			TrackCache *single;
+			Bucket *bucket;
+		} cache;
+		bool is_bucket = false;
+		uint32_t processed_bucket_elements = 0;
+
+		Bucket *get_bucket() {
+			return cache.bucket;
+		}
+		TrackCache *get_track_cache() {
+			return cache.single;
+		}
+		static Animation::TypeBucket get_bucket_hash(Animation::TypeHash path_hash, Animation::TypeHash subpath_hash) {
+			return (Animation::TypeBucket(path_hash) << 32) | Animation::TypeBucket(subpath_hash);
+		}
+
+		void set_track_cache(TrackCache *new_cache) {
+			cache.single = new_cache;
+		}
+		void add_track_cache(Animation::TypeBucket bucket_hash, TrackCache *new_cache) {
+			convert_to_bucket();
+			cache.bucket->insert(bucket_hash, new_cache);
+		}
+
+		void erase_bucket_index(Animation::TypeBucket bucket_hash) {
+			cache.bucket->erase(bucket_hash);
+			if (cache.bucket->size() == 1) {
+				make_single();
+			}
+		}
+
+		void make_single() {
+			TrackCache *t = cache.bucket->last()->value;
+			memdelete(cache.bucket);
+			cache.single = t;
+			is_bucket = false;
+		}
+
+		void erase_track_cache() {
+			memdelete(cache.single);
+		}
+		void convert_to_bucket() {
+			if (!is_bucket) {
+				is_bucket = true;
+				TrackCache *current = cache.single;
+				cache.bucket = memnew(Bucket);
+				if (current) {
+					cache.bucket->insert(current->bucket_hash, current);
+				}
+			}
+		}
+
+		bool is_processed() {
+			if (is_bucket) {
+				return processed_bucket_elements == cache.bucket->size();
+			}
+			return processed_bucket_elements == 1;
+		}
 	};
-	typedef AHashMap<Animation::TypeHash, HashBucket, HashHasher> AHashBucketMap;
+	typedef AHashMap<Animation::TypeHash, HashBucket *, HashHasher> AHashBucketMap;
 
 	struct RootMotionCache {
 		Vector3 loc = Vector3(0, 0, 0);
@@ -313,7 +370,6 @@ protected:
 
 	RootMotionCache root_motion_cache;
 	AHashBucketMap track_cache;
-	HashSet<Animation::TypeHash> bucket_keys;
 	AHashMap<Ref<Animation>, LocalVector<TrackCache *>> animation_track_num_to_track_cache;
 	HashSet<TrackCache *> playing_caches;
 	Vector<Node *> playing_audio_stream_players;
@@ -373,11 +429,13 @@ protected:
 	GDVIRTUAL5RC(Variant, _post_process_key_value, Ref<Animation>, int, Variant, ObjectID, int);
 
 	void _blend_init();
+	void _blend_init_loop(TrackCache *p_track);
 	virtual bool _blend_pre_process(double p_delta, int p_track_count, const AHashMap<NodePath, int> &p_track_map);
 	virtual void _blend_capture(double p_delta);
 	void _blend_calc_total_weight(); // For indeterministic blending.
 	void _blend_process(double p_delta, bool p_update_only = false);
 	void _blend_apply();
+	void _blend_apply_loop(TrackCache *p_track);
 	virtual void _blend_post_process();
 	void _call_object(ObjectID p_object_id, const StringName &p_method, const Vector<Variant> &p_params, bool p_deferred);
 
@@ -473,6 +531,7 @@ public:
 	bool is_reset_on_save_enabled() const;
 	bool can_apply_reset() const;
 	void _build_backup_track_cache();
+	void _build_backup_track_cache_loop(TrackCache* p_track);
 	Ref<AnimatedValuesBackup> make_backup();
 	void restore(const Ref<AnimatedValuesBackup> &p_backup);
 	void reset();

@@ -41,7 +41,7 @@ class Animation : public Resource {
 
 public:
 	typedef uint32_t TypeHash;
-	typedef uint8_t TypeBucket;
+	typedef uint64_t TypeBucket;
 
 	static inline String PARAMETERS_BASE_PATH = "parameters/";
 	static constexpr real_t DEFAULT_STEP = 1.0 / 30;
@@ -111,7 +111,8 @@ public:
 		bool loop_wrap = true;
 		NodePath path; // Path to something.
 		TypeHash thash = 0; // Hash by Path + SubPath + TrackType.
-		TypeBucket hbucket_index = 0; // The index inside the bucket.
+		TypeHash path_hash = 0; // Hash by Path.
+		TypeHash subpath_hash = 0; // Hash by SubPath.
 		bool imported = false;
 		bool enabled = true;
 		virtual ~Track() {}
@@ -423,8 +424,8 @@ public:
 	int find_track(const NodePath &p_path, const TrackType p_type) const;
 
 	TypeHash track_get_type_hash(int p_track) const;
-	TypeBucket track_get_hash_bucket_index(int p_track) const;
-	TypeBucket track_randomize_hash_bucket_index(int p_track);
+	TypeHash track_get_path_hash(int p_track) const;
+	TypeHash track_get_subpath_hash(int p_track) const;
 
 	void track_move_up(int p_track);
 	void track_move_down(int p_track);
