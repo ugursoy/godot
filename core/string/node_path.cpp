@@ -37,6 +37,8 @@ void NodePath::_update_hash_cache() const {
 	StringName subpath = get_concatenated_subnames();
 	uint32_t hash = HashMapHasherDefault::hash(Pair<const StringName &, const StringName &>(path, subpath));
 	data->hash_cache = is_absolute() ? hash : ~hash;
+	data->path_hash_cache = is_absolute() ? path.hash() : ~path.hash();
+	data->subpath_hash_cache = is_absolute() ? subpath.hash() : ~subpath.hash();
 	data->hash_cache_valid = true;
 }
 

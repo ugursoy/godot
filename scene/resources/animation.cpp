@@ -1067,9 +1067,9 @@ Animation::TrackType Animation::get_cache_type(TrackType p_type) {
 void Animation::_track_update_hash(int p_track) {
 	const NodePath &track_path = tracks[p_track]->path;
 	const TrackType track_cache_type = get_cache_type(tracks[p_track]->type);
-	tracks[p_track]->bhash = HashMapHasherDefault::hash(BHASH_SALT_PREPEND + String(track_path) + BHASH_SALT_APPEND);
 	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
-	tracks[p_track]->rhash = hash_murmur3_one_32(tracks[p_track]->bhash);
+	tracks[p_track]->path_hash = track_path.path_hash();
+	tracks[p_track]->subpath_hash = track_path.subpath_hash();
 }
 
 Animation::TypeHash Animation::track_probe_hash(int p_track) {
@@ -1083,14 +1083,14 @@ Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
 	return tracks[p_track]->thash;
 }
 
-Animation::TypeHash Animation::track_get_base_hash(int p_track) const {
+Animation::TypeHash Animation::track_get_path_hash(int p_track) const {
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
-	return tracks[p_track]->bhash;
+	return tracks[p_track]->path_hash;
 }
 
-Animation::TypeHash Animation::track_get_random_hash(int p_track) const {
+Animation::TypeHash Animation::track_get_subpath_hash(int p_track) const {
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
-	return tracks[p_track]->rhash;
+	return tracks[p_track]->subpath_hash;
 }
 
 void Animation::track_set_interpolation_type(int p_track, InterpolationType p_interp) {
