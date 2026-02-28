@@ -290,12 +290,12 @@ struct has_is_same_method<T, std::void_t<std::is_same<decltype(std::declval<cons
 template <typename T>
 constexpr bool has_is_same_method_v = has_is_same_method<T>::value;
 
-struct HashHasher {
-	static _FORCE_INLINE_ uint32_t hash(const int32_t hash) { return hash; }
-	static _FORCE_INLINE_ uint32_t hash(const uint32_t hash) { return hash; }
-	static _FORCE_INLINE_ uint64_t hash(const int64_t hash) { return hash; }
-	static _FORCE_INLINE_ uint64_t hash(const uint64_t hash) { return hash; }
-};
+// struct HashHasher {
+// 	static _FORCE_INLINE_ uint32_t hash(const int32_t hash) { return hash; }
+// 	static _FORCE_INLINE_ uint32_t hash(const uint32_t hash) { return hash; }
+// 	static _FORCE_INLINE_ uint64_t hash(const int64_t hash) { return hash; }
+// 	static _FORCE_INLINE_ uint64_t hash(const uint64_t hash) { return hash; }
+// };
 
 template <typename T, typename = void>
 struct HashMapComparatorDefault {

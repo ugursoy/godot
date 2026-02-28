@@ -1064,11 +1064,11 @@ Animation::TrackType Animation::get_cache_type(TrackType p_type) {
 void Animation::_track_update_hash(int p_track) {
 	const NodePath &track_path = tracks[p_track]->path;
 	const TrackType track_cache_type = get_cache_type(tracks[p_track]->type);
-	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
+	tracks[p_track]->thash = StringName(String(track_path) + itos(track_cache_type));
 }
 
-Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
-	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
+const Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
+	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), SNAME(""));
 	return tracks[p_track]->thash;
 }
 
