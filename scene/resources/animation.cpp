@@ -32,6 +32,7 @@
 #include "animation.compat.inc"
 
 #include "core/io/marshalls.h"
+#include "core/object/callable_mp.h"
 #include "core/object/class_db.h"
 
 bool Animation::_set(const StringName &p_name, const Variant &p_value) {
@@ -1034,7 +1035,7 @@ Animation::TrackType Animation::track_get_type(int p_track) const {
 void Animation::track_set_path(int p_track, const NodePath &p_path) {
 	ERR_FAIL_UNSIGNED_INDEX((uint32_t)p_track, tracks.size());
 	tracks[p_track]->path = p_path;
-	_track_update_hash(p_track);
+	_track_update_unique_ids(p_track);
 	emit_changed();
 }
 
@@ -1062,15 +1063,40 @@ Animation::TrackType Animation::get_cache_type(TrackType p_type) {
 	return p_type;
 }
 
-void Animation::_track_update_hash(int p_track) {
-	const NodePath &track_path = tracks[p_track]->path;
-	const TrackType track_cache_type = get_cache_type(tracks[p_track]->type);
-	tracks[p_track]->thash = HashMapHasherDefault::hash(Pair<const NodePath &, TrackType>(track_path, track_cache_type));
+void Animation::_track_update_unique_ids(int p_track) {
+	if (update_track_cache_ids) {
+		return;
+	}
+	track_update_counter++;
+	update_track_cache_ids = true;
+	callable_mp(this, &Animation::ensure_unique_ids).call_deferred();
 }
 
-Animation::TypeHash Animation::track_get_type_hash(int p_track) const {
+void Animation::ensure_unique_ids() {
+	if (!update_track_cache_ids) {
+		return;
+	}
+
+	for (Track *track : tracks) {
+		const NodePath &track_path = track->path;
+		const TrackType track_cache_type = get_cache_type(track->type);
+
+		StringName id = StringName(String(track_path) + itos(track_cache_type));
+		track->unique_id = (TypeTrackId)id.data_unique_pointer();
+		track_cache_id_list.push_back(id); // Keep StringName object alive
+	}
+
+	update_track_cache_ids = false;
+	track_update_counter--;
+	if (track_update_counter == 0) {
+		// All IDs are assigned so StringNames can be freed
+		track_cache_id_list.clear();
+	}
+}
+
+Animation::TypeTrackId Animation::track_get_unique_id(int p_track) const {
 	ERR_FAIL_UNSIGNED_INDEX_V((uint32_t)p_track, tracks.size(), 0);
-	return tracks[p_track]->thash;
+	return tracks[p_track]->unique_id;
 }
 
 void Animation::track_set_interpolation_type(int p_track, InterpolationType p_interp) {

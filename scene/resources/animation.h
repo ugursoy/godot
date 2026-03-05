@@ -31,6 +31,7 @@
 #pragma once
 
 #include "core/io/resource.h"
+#include "core/templates/a_hash_map.h"
 #include "core/templates/local_vector.h"
 
 #define ANIM_MIN_LENGTH 0.001
@@ -40,7 +41,7 @@ class Animation : public Resource {
 	RES_BASE_EXTENSION("anim");
 
 public:
-	typedef uint32_t TypeHash;
+	typedef uint64_t TypeTrackId;
 
 	static inline String PARAMETERS_BASE_PATH = "parameters/";
 	static constexpr real_t DEFAULT_STEP = 1.0 / 30;
@@ -109,7 +110,7 @@ public:
 		InterpolationType interpolation = INTERPOLATION_LINEAR;
 		bool loop_wrap = true;
 		NodePath path; // Path to something.
-		TypeHash thash = 0; // Hash by Path + SubPath + TrackType.
+		TypeTrackId unique_id = 0; // Hash by Path + SubPath + TrackType.
 		bool imported = false;
 		bool enabled = true;
 		virtual ~Track() {}
@@ -250,6 +251,9 @@ private:
 	HashMap<StringName, Color> marker_colors; // name -> color
 
 	LocalVector<Track *> tracks;
+	static inline LocalVector<StringName> track_cache_id_list; // keeps StringNames until all ids are assigned
+	static inline int track_update_counter = 0;
+	bool update_track_cache_ids = false;
 
 #ifdef TOOLS_ENABLED
 	HashSet<StringName> folded_groups;
@@ -288,7 +292,7 @@ private:
 	bool capture_included = false;
 	void _check_capture_included();
 
-	void _track_update_hash(int p_track);
+	void _track_update_unique_ids(int p_track);
 
 	/* Animation compression page format (version 1):
 	 *
@@ -424,7 +428,8 @@ public:
 	NodePath track_get_path(int p_track) const;
 	int find_track(const NodePath &p_path, const TrackType p_type) const;
 
-	TypeHash track_get_type_hash(int p_track) const;
+	TypeTrackId track_get_unique_id(int p_track) const;
+	void ensure_unique_ids();
 
 	void track_move_up(int p_track);
 	void track_move_down(int p_track);
